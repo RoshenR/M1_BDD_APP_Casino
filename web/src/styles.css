@@ -1,0 +1,237 @@
+/* Feuille de style unique : le front reste volontairement leger.
+   L'effort du projet porte sur la base de donnees. */
+
+:root {
+  --feutre: #0b3d2e;
+  --feutre-clair: #12543f;
+  --fond: #0a0f0d;
+  --carte: #121a17;
+  --bord: #1f302a;
+  --or: #d4af37;
+  --or-clair: #f0d97a;
+  --texte: #e8efe9;
+  --texte-doux: #93a89c;
+  --rouge: #b3222c;
+  --noir: #16191c;
+  --vert: #1f8a4c;
+  --danger: #e05252;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, #133f31 0%, transparent 60%),
+    var(--fond);
+  color: var(--texte);
+  min-height: 100vh;
+}
+
+a { color: var(--or-clair); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* --- Structure ------------------------------------------------------------ */
+.entete {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 1px solid var(--bord);
+  background: rgba(10, 15, 13, 0.85);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+
+.marque {
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.12em;
+  color: var(--or);
+  text-transform: uppercase;
+}
+
+.nav { display: flex; gap: 1.1rem; flex: 1; flex-wrap: wrap; }
+.nav a { color: var(--texte-doux); font-size: 0.92rem; }
+.nav a.actif, .nav a:hover { color: var(--or-clair); text-decoration: none; }
+
+.solde {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--or);
+  background: #11201a;
+  border: 1px solid var(--bord);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+}
+
+main { max-width: 1040px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+
+h1 { font-size: 1.6rem; margin: 0 0 0.35rem; }
+h2 { font-size: 1.15rem; margin: 2rem 0 0.75rem; }
+.sous-titre { color: var(--texte-doux); margin: 0 0 1.75rem; font-size: 0.95rem; }
+
+/* --- Cartes --------------------------------------------------------------- */
+.carte {
+  background: var(--carte);
+  border: 1px solid var(--bord);
+  border-radius: 14px;
+  padding: 1.25rem;
+}
+
+.grille { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+
+.tapis {
+  background:
+    radial-gradient(600px 300px at 50% 0%, var(--feutre-clair), var(--feutre));
+  border: 1px solid #1d5a45;
+  border-radius: 16px;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  margin-bottom: 1.5rem;
+  min-height: 210px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+/* --- Formulaires ---------------------------------------------------------- */
+label { display: block; font-size: 0.85rem; color: var(--texte-doux); margin-bottom: 0.3rem; }
+
+input, select {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: #0d1512;
+  border: 1px solid var(--bord);
+  border-radius: 8px;
+  color: var(--texte);
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+input:focus, select:focus { outline: 2px solid var(--or); outline-offset: -1px; }
+
+.champ { margin-bottom: 0.9rem; }
+
+button {
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid var(--bord);
+  background: #182420;
+  color: var(--texte);
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+button:hover:not(:disabled) { filter: brightness(1.25); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+button.principal {
+  background: linear-gradient(180deg, var(--or-clair), var(--or));
+  color: #1a1405;
+  border-color: var(--or);
+}
+button.rouge { background: var(--rouge); border-color: #d2323d; }
+button.noir  { background: var(--noir);  border-color: #2b3238; }
+
+.boutons { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }
+
+/* --- Messages ------------------------------------------------------------- */
+.erreur {
+  background: #3a1618;
+  border: 1px solid var(--danger);
+  color: #ffc9c9;
+  padding: 0.7rem 0.9rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+.succes {
+  background: #12331f;
+  border: 1px solid var(--vert);
+  color: #b9f0cd;
+  padding: 0.7rem 0.9rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+/* --- Jeux ----------------------------------------------------------------- */
+.numero-roulette {
+  width: 96px; height: 96px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 2.4rem; font-weight: 700;
+  border: 3px solid var(--or);
+  margin: 0 auto;
+}
+.numero-roulette.rouge { background: var(--rouge); }
+.numero-roulette.noir  { background: var(--noir); }
+.numero-roulette.vert  { background: var(--vert); }
+
+.rouleaux { display: flex; gap: 0.75rem; justify-content: center; }
+.rouleau {
+  width: 92px; height: 92px;
+  background: #0d1512;
+  border: 2px solid var(--or);
+  border-radius: 12px;
+  display: grid; place-items: center;
+  font-size: 2.4rem;
+}
+
+.main-cartes { display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap; }
+.carte-a-jouer {
+  width: 58px; height: 82px;
+  background: #f7f4ec;
+  color: #16191c;
+  border-radius: 7px;
+  display: grid; place-items: center;
+  font-size: 1.1rem; font-weight: 700;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+}
+.carte-a-jouer.rouge { color: var(--rouge); }
+.carte-a-jouer.cachee { background: linear-gradient(135deg, #2c3e50, #1a252f); color: #7a8b99; }
+
+.mains { display: flex; gap: 2.5rem; justify-content: center; flex-wrap: wrap; }
+.main-joueur { text-align: center; }
+.main-joueur .total { color: var(--or-clair); font-weight: 700; margin-top: 0.5rem; }
+
+/* --- Tableaux ------------------------------------------------------------- */
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+th, td { padding: 0.55rem 0.7rem; text-align: left; border-bottom: 1px solid var(--bord); }
+th { color: var(--texte-doux); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.gain { color: #5fd18b; }
+.perte { color: #ef8080; }
+
+.tableau-defilant { max-height: 420px; overflow: auto; }
+
+/* --- Divers --------------------------------------------------------------- */
+.pastille {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--bord);
+  color: var(--texte-doux);
+}
+.mono { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 0.78rem; }
+.discret { color: var(--texte-doux); font-size: 0.85rem; }
+
+.centre { display: grid; place-items: center; min-height: 70vh; }
+.etroit { width: 100%; max-width: 400px; }
+
+.notice {
+  border-left: 3px solid var(--or);
+  padding: 0.6rem 0 0.6rem 0.9rem;
+  color: var(--texte-doux);
+  font-size: 0.85rem;
+  margin: 1rem 0;
+}

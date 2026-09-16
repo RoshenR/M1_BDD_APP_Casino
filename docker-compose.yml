@@ -1,0 +1,186 @@
+name: casino
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 18 - le coeur du projet.
+  # Les scripts de db/init/ sont joues UNE SEULE FOIS, dans l'ordre alphabetique,
+  # au tout premier demarrage. `docker compose down -v` pour tout rejouer.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:18
+    container_name: casino_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: casino
+
+      # Sommes de controle : detecte une corruption disque silencieuse.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - log_min_duration_statement=500
+    ports:
+      - "5432:5432"
+    volumes:
+      # PostgreSQL 18 range les donnees dans un sous-dossier par version :
+      # on monte /var/lib/postgresql, PAS /var/lib/postgresql/data.
+      - pgdata:/var/lib/postgresql
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./db:/db:ro
+    healthcheck:
+      # Le remplissage dure ~1 min : on attend le drapeau de fin de migration,
+      # pas seulement que le serveur reponde. L'API demarre apres, pas pendant.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d casino && psql -U postgres -d casino -tAc \"SELECT 1 FROM casino.migration_terminee\" | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: casino_pgadmin
+    environment:
+      # pgAdmin refuse les domaines reserves (.local, .test...) : il valide
+      # vraiment l'adresse au demarrage.
+      PGADMIN_DEFAULT_EMAIL: admin@casino.example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "8080:80"
+    volumes:
+      - ./db/pgadmin-servers.json:/pgadmin4/servers.json:ro
+      - pgadmindata:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_started
+
+  # ---------------------------------------------------------------------------
+  # Redis - sessions/refresh tokens, rate-limiting, classement temps reel (ZSET).
+  # Aucun solde ici : l'argent reste dans PostgreSQL, sous transaction.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: casino_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # MongoDB - replay detaille des parties (documents de forme variable).
+  # Journal jetable : une panne ici ne coute aucun jeton.
+  # ---------------------------------------------------------------------------
+  mongo:
+    image: mongo:7
+    container_name: casino_mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-casino}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-casino}
+      MONGO_INITDB_DATABASE: casino
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+      - ./db/mongo-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # Neo4j - graphe de parrainage et detection de collusion (cycles de transferts).
+  # Projection en lecture : la verite reste dans PostgreSQL.
+  # ---------------------------------------------------------------------------
+  neo4j:
+    image: neo4j:5-community
+    container_name: casino_neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-casinocasino}
+      NEO4J_server_memory_heap_max__size: 512M
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"   # navigateur
+      - "7687:7687"   # bolt
+    volumes:
+      - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # ---------------------------------------------------------------------------
+  # API - Fastify + TypeScript, SQL brut, aucun ORM.
+  # Se connecte avec casino_api : EXECUTE sur les fonctions metier et rien de plus.
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ./api
+      target: dev
+    container_name: casino_api
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      # Role de l'application : aucun droit d'ecriture direct sur les tables.
+      DATABASE_URL: postgres://casino_api:${API_DB_PASSWORD:-api_secret}@postgres:5432/casino
+      # Le back-office utilise un role DIFFERENT : casino_superviseur, qui a
+      # BYPASSRLS. Deux roles dans la meme application = moindre privilege.
+      DATABASE_URL_ADMIN: postgres://casino_superviseur:${SUPERVISEUR_DB_PASSWORD:-super_secret}@postgres:5432/casino
+      REDIS_URL: redis://redis:6379
+      MONGO_URL: mongodb://${MONGO_USER:-casino}:${MONGO_PASSWORD:-casino}@mongo:27017/casino?authSource=admin
+      NEO4J_URL: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-casinocasino}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-a-changer-en-production}
+      CORS_ORIGIN: http://localhost:5173
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./api/src:/app/src:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Front - React + Vite. Dissocie : il ne parle qu'a l'API, jamais a la base.
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ./web
+      target: dev
+    container_name: casino_web
+    environment:
+      VITE_API_URL: http://localhost:3000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web/src:/app/src:ro
+      - ./web/index.html:/app/index.html:ro
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  pgadmindata:
+  redisdata:
+  mongodata:
+  neo4jdata:

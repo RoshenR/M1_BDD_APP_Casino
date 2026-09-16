@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/lib/api.ts","./src/lib/solde.tsx","./src/pages/blackjack.tsx","./src/pages/classement.tsx","./src/pages/connexion.tsx","./src/pages/inscription.tsx","./src/pages/lobby.tsx","./src/pages/machine.tsx","./src/pages/profil.tsx","./src/pages/roulette.tsx"],"version":"5.9.3"}

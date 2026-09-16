@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python --version)",
+      "PowerShell(pip --version)",
+      "PowerShell(docker --version)",
+      "PowerShell(node --version)",
+      "PowerShell(docker compose up -d postgres 2>&1)",
+      "Bash(docker exec *)",
+      "PowerShell(docker compose down -v 2>&1)",
+      "Bash(cat)",
+      "Bash(docker cp *)",
+      "Bash(mkdir -p db/test)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec -e PGPASSWORD=api_secret casino_postgres psql -U casino_api -d casino -f /db/test/securite.sql)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec casino_postgres psql -U postgres -d casino -c ' *)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec -e PGPASSWORD=api_secret casino_postgres psql -U casino_api -d casino -f /db/test/jeux.sql)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec casino_postgres psql -U postgres -d casino -f /db/test/triggers.sql)"
+    ]
+  }
+}

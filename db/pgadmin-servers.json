@@ -1,0 +1,34 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Casino · postgres (superutilisateur)",
+      "Group": "Projet BDD",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "casino",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "Comment": "Acces complet. Sert a administrer et a rejouer les scripts de db/demo."
+    },
+    "2": {
+      "Name": "Casino · casino_api (role de l'application)",
+      "Group": "Projet BDD",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "casino",
+      "Username": "casino_api",
+      "SSLMode": "prefer",
+      "Comment": "Mot de passe : api_secret. Connectez-vous avec CE role pour constater les refus : UPDATE joueurs SET solde = 999999 -> permission denied."
+    },
+    "3": {
+      "Name": "Casino · casino_analyste (reporting)",
+      "Group": "Projet BDD",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "casino",
+      "Username": "casino_analyste",
+      "SSLMode": "prefer",
+      "Comment": "Mot de passe : analyste_secret. Lit les vues materialisees, jamais la table joueurs."
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "casino-bdd",
+  "private": true,
+  "description": "Casino fictif - projet SQL avance M1 EFREI",
+  "scripts": {
+    "up": "docker compose up -d --wait",
+    "down": "docker compose down",
+    "reset": "docker compose down -v && docker compose up -d --wait",
+    "logs": "docker compose logs -f api",
+    "psql": "docker compose exec postgres psql -U postgres -d casino",
+    "psql:api": "docker compose exec postgres psql -U casino_api -d casino",
+    "demo:1": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/01-requetes-complexes.sql",
+    "demo:2": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/02-vues.sql",
+    "demo:3": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/03-index.sql",
+    "demo:4": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/04-fonctions-triggers.sql",
+    "demo:5": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/05-securite.sql",
+    "index": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/03-index.sql",
+    "securite:recharger": "docker compose exec postgres psql -U postgres -d casino -f /docker-entrypoint-initdb.d/02_fonctions.sql -f /docker-entrypoint-initdb.d/05_securite.sql",
+    "typecheck": "cd api && npx tsc --noEmit && cd ../web && npx tsc -b --noEmit"
+  }
+}
