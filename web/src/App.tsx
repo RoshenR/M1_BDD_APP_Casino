@@ -1,7 +1,9 @@
-import { Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
-import { type ReactNode } from 'react';
+import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { useEffect, type ReactNode } from 'react';
 import { session } from './lib/api';
 import { FournisseurSolde, jetons, useSolde } from './lib/solde';
+import { FournisseurToasts } from './lib/toast';
+import { Jeton } from './components/Jetons';
 
 import { Connexion } from './pages/Connexion';
 import { Inscription } from './pages/Inscription';
@@ -13,64 +15,72 @@ import { Profil } from './pages/Profil';
 import { Classement } from './pages/Classement';
 
 function Protege({ children }: { children: ReactNode }) {
-  return session.token() ? <>{children}</> : <Navigate to="/connexion" replace />;
+  const lieu = useLocation();
+  return session.token()
+    ? <>{children}</>
+    : <Navigate to="/connexion" replace state={{ retour: lieu.pathname }} />;
 }
 
 function Entete() {
-  const { solde } = useSolde();
+  const { solde, rafraichir } = useSolde();
   const joueur = session.joueur();
-  const naviguer = useNavigate();
+  const lieu = useLocation();
 
-  const lien = ({ isActive }: { isActive: boolean }) => (isActive ? 'actif' : '');
+  // Le solde peut avoir bouge ailleurs (autre onglet, back-office) : on le relit
+  // a chaque changement de page plutot que de le croire sur parole.
+  useEffect(() => { void rafraichir(); }, [lieu.pathname, rafraichir]);
 
   return (
     <header className="entete">
-      <span className="marque">♠ Casino</span>
-      <nav className="nav">
-        <NavLink to="/" end className={lien}>Salon</NavLink>
-        <NavLink to="/roulette" className={lien}>Roulette</NavLink>
-        <NavLink to="/machine" className={lien}>Machine</NavLink>
-        <NavLink to="/blackjack" className={lien}>Blackjack</NavLink>
-        <NavLink to="/classement" className={lien}>Classement</NavLink>
-        {joueur && <NavLink to="/profil" className={lien}>Profil</NavLink>}
-      </nav>
+      <div className="entete__interieur">
+        <Link to="/" className="marque">
+          <Jeton valeur={100} taille="xs" />
+          Casino
+        </Link>
 
-      {joueur ? (
-        <>
-          <span className="solde">{jetons(solde)} jetons</span>
-          <button
-            onClick={() => {
-              session.fermer();
-              naviguer('/connexion');
-            }}
-          >
-            Deconnexion
-          </button>
-        </>
-      ) : (
-        <NavLink to="/connexion">Connexion</NavLink>
-      )}
+        <nav className="nav" aria-label="Navigation principale">
+          <NavLink to="/" end>Salon</NavLink>
+          <NavLink to="/roulette">Roulette</NavLink>
+          <NavLink to="/machine">Machine à sous</NavLink>
+          <NavLink to="/blackjack">Blackjack</NavLink>
+          <NavLink to="/classement">Classement</NavLink>
+        </nav>
+
+        {joueur ? (
+          <Link to="/profil" className="caisse" title="Votre profil et votre portefeuille">
+            <Jeton valeur={25} taille="s" />
+            <span>
+              <span className="montant">{jetons(solde)}</span>
+              <span className="visuellement-cache"> jetons — profil de {joueur.pseudo}</span>
+            </span>
+          </Link>
+        ) : (
+          <Link to="/connexion" className="bouton bouton--principal">Se connecter</Link>
+        )}
+      </div>
     </header>
   );
 }
 
 export function App() {
   return (
-    <FournisseurSolde>
-      <Entete />
-      <main>
-        <Routes>
-          <Route path="/" element={<Lobby />} />
-          <Route path="/connexion" element={<Connexion />} />
-          <Route path="/inscription" element={<Inscription />} />
-          <Route path="/classement" element={<Classement />} />
-          <Route path="/roulette" element={<Protege><Roulette /></Protege>} />
-          <Route path="/machine" element={<Protege><Machine /></Protege>} />
-          <Route path="/blackjack" element={<Protege><Blackjack /></Protege>} />
-          <Route path="/profil" element={<Protege><Profil /></Protege>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
-    </FournisseurSolde>
+    <FournisseurToasts>
+      <FournisseurSolde>
+        <Entete />
+        <main>
+          <Routes>
+            <Route path="/" element={<Lobby />} />
+            <Route path="/connexion" element={<Connexion />} />
+            <Route path="/inscription" element={<Inscription />} />
+            <Route path="/classement" element={<Classement />} />
+            <Route path="/roulette" element={<Protege><Roulette /></Protege>} />
+            <Route path="/machine" element={<Protege><Machine /></Protege>} />
+            <Route path="/blackjack" element={<Protege><Blackjack /></Protege>} />
+            <Route path="/profil" element={<Protege><Profil /></Protege>} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </main>
+      </FournisseurSolde>
+    </FournisseurToasts>
   );
 }

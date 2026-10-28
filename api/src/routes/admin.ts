@@ -15,7 +15,7 @@
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
 import { z } from 'zod';
-import { cypher } from '../infra/neo4j.js';
+import { remplacerStats, type StatsJoueur } from '../infra/mongo.js';
 import { ErreurHttp, traduireErreurPg } from '../erreurs.js';
 
 const poolAdmin = new pg.Pool({
@@ -120,61 +120,18 @@ export async function routesAdmin(app: FastifyInstance): Promise<void> {
   });
 
   /**
-   * Projette le graphe PostgreSQL dans Neo4j.
-   * A lancer une fois apres le premier demarrage : Neo4j ne recoit sinon que
-   * les inscriptions et les transferts faits depuis l'API.
-   * La verite reste PostgreSQL ; ceci n'est qu'une copie de travail.
+   * Detection de collusion : les jetons qui tournent en boucle entre joueurs
+   * (A -> B -> C -> A). Tout le calcul est dans detecter_collusion(), une
+   * requete WITH RECURSIVE ... CYCLE sur la table transferts.
    */
-  app.post('/admin/neo4j/synchroniser', proteger, async () => {
-    const joueurs = await admin<{ id: number; pseudo: string; parrain_id: number | null }>(
-      'SELECT id, pseudo, parrain_id FROM casino.joueurs ORDER BY id');
-
-    const transferts = await admin<{ de: number; vers: number; total: number; nb: number }>(
-      `SELECT e.joueur_id AS de, r.joueur_id AS vers,
-              sum(r.montant)::float8 AS total, count(*)::int AS nb
-       FROM casino.transactions e
-       JOIN casino.transactions r
-         ON r.type = 'transfert_recu'
-        AND r.cree_le = e.cree_le
-        AND r.montant = -e.montant
-       WHERE e.type = 'transfert_envoye'
-       GROUP BY 1, 2`);
-
-    await cypher('MATCH (n:Joueur) DETACH DELETE n');
-    await cypher(
-      `UNWIND $lignes AS l
-       MERGE (j:Joueur {id: l.id}) SET j.pseudo = l.pseudo`,
-      { lignes: joueurs.map((j) => ({ id: j.id, pseudo: j.pseudo })) });
-    await cypher(
-      `UNWIND $lignes AS l
-       MATCH (p:Joueur {id: l.parrain}), (f:Joueur {id: l.id})
-       MERGE (p)-[:PARRAINE]->(f)`,
-      { lignes: joueurs.filter((j) => j.parrain_id).map((j) => ({ id: j.id, parrain: j.parrain_id })) });
-    await cypher(
-      `UNWIND $lignes AS l
-       MATCH (a:Joueur {id: l.de}), (b:Joueur {id: l.vers})
-       MERGE (a)-[t:TRANSFERE]->(b) SET t.total = l.total, t.nb = l.nb`,
-      { lignes: transferts });
-
-    return { joueurs: joueurs.length, transferts: transferts.length };
+  app.get('/admin/collusion', proteger, async (req) => {
+    const { longueur } = z.object({ longueur: z.coerce.number().int().min(2).max(6).default(4) })
+      .parse(req.query);
+    return admin('SELECT * FROM casino.detecter_collusion($1)', [longueur]);
   });
 
-  /**
-   * Detection de collusion — LA question pour laquelle Cypher bat SQL.
-   * On cherche des CYCLES de transferts : A donne a B, B donne a C, C donne a A.
-   * En SQL il faudrait une CTE recursive avec detection de boucle et un
-   * garde-fou de profondeur ; en Cypher, c'est un motif.
-   */
-  app.get('/admin/collusion', proteger, async () => {
-    const cycles = await cypher(
-      `MATCH chemin = (a:Joueur)-[:TRANSFERE*2..4]->(a)
-       RETURN [n IN nodes(chemin) | n.pseudo] AS boucle,
-              reduce(s = 0, r IN relationships(chemin) | s + r.total) AS volume
-       ORDER BY volume DESC
-       LIMIT 20`,
-    );
-    return { cycles, note: 'Le meme calcul en SQL demanderait une CTE recursive avec detection de boucle.' };
-  });
+  /** Reconstruit la collection Mongo stats_joueurs depuis PostgreSQL. */
+  app.post('/admin/mongo/reconstruire', proteger, async () => reconstruireStatsMongo());
 
   /** Suspension d'un compte : trace automatiquement par le trigger d'audit. */
   app.post('/admin/joueurs/statut', proteger, async (req) => {
@@ -190,6 +147,18 @@ export async function routesAdmin(app: FastifyInstance): Promise<void> {
     if (lignes.length === 0) throw new ErreurHttp(404, 'Joueur introuvable');
     return lignes[0];
   });
+}
+
+/**
+ * Les stats Mongo sont DERIVEES des parties : PostgreSQL les reconstruit a la
+ * demande (export_stats_joueurs construit directement les documents jsonb).
+ * Appele au demarrage si la collection est vide, puis a la demande.
+ */
+export async function reconstruireStatsMongo(): Promise<{ documents: number; duree_ms: number }> {
+  const debut = Date.now();
+  const lignes = await admin<{ document: StatsJoueur }>('SELECT document FROM casino.export_stats_joueurs()');
+  const documents = await remplacerStats(lignes.map((l) => l.document));
+  return { documents, duree_ms: Date.now() - debut };
 }
 
 export async function fermerAdmin(): Promise<void> {

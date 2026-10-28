@@ -14,12 +14,6 @@ export const config = {
   redisUrl: requis('REDIS_URL', 'redis://localhost:6379'),
   mongoUrl: requis('MONGO_URL', 'mongodb://casino:casino@localhost:27017/casino?authSource=admin'),
 
-  neo4j: {
-    url: requis('NEO4J_URL', 'bolt://localhost:7687'),
-    user: requis('NEO4J_USER', 'neo4j'),
-    password: requis('NEO4J_PASSWORD', 'casinocasino'),
-  },
-
   jwtSecret: requis('JWT_SECRET', 'dev-secret-a-changer-en-production'),
   jwtDuree: '15m',          // court : le refresh token vit dans Redis
   refreshDureeSecondes: 60 * 60 * 24 * 7,

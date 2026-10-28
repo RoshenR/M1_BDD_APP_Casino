@@ -150,7 +150,13 @@ SELECT
        WHEN r.gain = r.mise THEN 'egalite'
        ELSE 'perdu' END,
   CASE r.jeu_id
-    WHEN 2 THEN jsonb_build_object('numero', floor(r.alea * 37)::int, 'pari', 'rouge')
+    -- Le pari du seed est toujours « rouge » : le numero doit etre rouge si la
+    -- partie est gagnee, noir ou zero sinon. Sinon les stats de jeu seraient
+    -- incoherentes (« 15 rouges sortis » mais « 11 paris rouges gagnes »).
+    WHEN 2 THEN jsonb_build_object('pari', 'rouge', 'numero', CASE WHEN r.gain > 0
+      THEN (ARRAY[1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36])[1 + floor(r.alea * 18)::int]
+      ELSE (ARRAY[0,2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35])[1 + floor(r.alea * 19)::int]
+    END)
     WHEN 3 THEN jsonb_build_object('rouleaux', jsonb_build_array(
                   machine_symbole(floor(r.alea * 100)::int),
                   machine_symbole(floor(r.alea * 771)::int % 100),
@@ -197,12 +203,11 @@ DROP TABLE _mouvements;
 
 
 -- --- Transferts entre joueurs ------------------------------------------------
--- De quoi alimenter la detection de collusion dans Neo4j. On melange :
+-- De quoi alimenter detecter_collusion(). On melange :
 --   · des transferts ordinaires entre amis
 --   · trois ANNEAUX volontaires (A -> B -> C -> A), le motif qu'un vrai casino
 --     traque : des jetons qui tournent en boucle pour blanchir ou pour vider
---     un bonus. En SQL il faudrait une CTE recursive avec detection de cycle ;
---     en Cypher, c'est un motif d'une ligne.
+--     un bonus. WITH RECURSIVE ... CYCLE doit les retrouver tous les trois.
 -- -----------------------------------------------------------------------------
 CREATE UNLOGGED TABLE _transferts (
   de int, vers int, montant numeric(14,2), cree_le timestamptz
@@ -225,6 +230,11 @@ FROM (VALUES
   (301, 302, 8), (302, 301, 9)
 ) AS x(de, vers, j);
 
+-- Le graphe (qui a paye qui)...
+INSERT INTO transferts (expediteur_id, destinataire_id, montant, cree_le)
+SELECT de, vers, montant, cree_le FROM _transferts;
+
+-- ... et les mouvements d'argent correspondants dans le grand livre.
 INSERT INTO transactions (joueur_id, type, montant, solde_apres, libelle, cree_le)
 SELECT m.joueur_id, m.type, m.montant,
        -- Solde courant recalcule en incluant ces nouveaux mouvements.

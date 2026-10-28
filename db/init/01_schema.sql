@@ -192,7 +192,7 @@ COMMENT ON COLUMN journal_audit.joueur_app IS 'Utilisateur applicatif, pose par 
 
 
 -- -----------------------------------------------------------------------------
--- AMITIES — le graphe social, miroir relationnel de Neo4j
+-- AMITIES — le graphe social
 -- -----------------------------------------------------------------------------
 CREATE TABLE amities (
   joueur_id int         NOT NULL REFERENCES joueurs(id) ON DELETE CASCADE,
@@ -203,4 +203,27 @@ CREATE TABLE amities (
   CONSTRAINT amities_pas_soi_meme CHECK (joueur_id <> ami_id)
 );
 
-COMMENT ON TABLE amities IS 'Graphe d''amities. Duplique dans Neo4j pour comparer WITH RECURSIVE et Cypher.';
+COMMENT ON TABLE amities IS 'Graphe d''amities, rendu symetrique par le trigger amities_symetrie.';
+
+
+-- -----------------------------------------------------------------------------
+-- TRANSFERTS — qui envoie des jetons a qui
+-- -----------------------------------------------------------------------------
+-- Le grand livre sait qu'alice a perdu 500 jetons et que bob en a gagne 500,
+-- mais pas que l'un a paye l'autre. Cette table garde le LIEN : c'est un graphe
+-- oriente (expediteur -> destinataire), parcouru en WITH RECURSIVE ... CYCLE
+-- pour detecter les jetons qui tournent en boucle (detecter_collusion()).
+-- -----------------------------------------------------------------------------
+CREATE TABLE transferts (
+  id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  expediteur_id   int           NOT NULL REFERENCES joueurs(id) ON DELETE RESTRICT,
+  destinataire_id int           NOT NULL REFERENCES joueurs(id) ON DELETE RESTRICT,
+  montant         numeric(14,2) NOT NULL,
+  message         text,
+  cree_le         timestamptz   NOT NULL DEFAULT now(),
+
+  CONSTRAINT transferts_montant_positif CHECK (montant > 0),
+  CONSTRAINT transferts_pas_soi_meme    CHECK (expediteur_id <> destinataire_id)
+);
+
+COMMENT ON TABLE transferts IS 'Graphe oriente des transferts entre joueurs. Les mouvements d''argent correspondants sont dans transactions.';

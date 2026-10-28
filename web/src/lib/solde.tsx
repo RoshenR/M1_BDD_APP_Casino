@@ -40,6 +40,14 @@ export function FournisseurSolde({ children }: { children: ReactNode }) {
 
 export const useSolde = () => useContext(Contexte);
 
-export const jetons = (n: number | string | undefined) =>
-  new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    .format(Number(n ?? 0));
+/** 49805 -> « 49 805 », 12.5 -> « 12,50 » : pas de centimes inutiles. */
+export const jetons = (n: number | string | undefined) => {
+  const v = Number(n ?? 0);
+  return new Intl.NumberFormat('fr-FR', {
+    minimumFractionDigits: Number.isInteger(v) ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(v);
+};
+
+/** Montant signe pour les gains et pertes : « +40 », « −25 ». */
+export const signe = (n: number) => (n > 0 ? `+${jetons(n)}` : n < 0 ? `−${jetons(-n)}` : '0');

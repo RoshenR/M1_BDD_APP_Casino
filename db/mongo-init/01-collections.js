@@ -1,5 +1,5 @@
 // =============================================================================
-// MongoDB — le replay detaille des parties
+// MongoDB — 1. le replay detaille des parties
 // =============================================================================
 // Pourquoi Mongo ici, et pas une table PostgreSQL ?
 //
@@ -44,3 +44,36 @@ db.replays.createIndex({ joueurId: 1, cree_le: -1 });
 db.replays.createIndex({ cree_le: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 365 });
 
 print('[mongo] collection "replays" prete');
+
+// =============================================================================
+// stats_joueurs — le comportement de jeu, un document par joueur
+// =============================================================================
+// Chaque jeu remplit sa propre branche, avec sa propre forme :
+//   roulette  : numeros sortis, couleurs, types de paris
+//   machine   : combinaisons obtenues, meilleur multiplicateur
+//   blackjack : resultats, mains depassees, doubles, total moyen
+//
+// En SQL, il faudrait trois tables, ou une table cle/valeur fourre-tout. Ici,
+// un document, mis a jour par un seul updateOne + $inc apres chaque partie.
+//
+// Ce ne sont PAS des donnees comptables : les mises, gains et soldes font foi
+// dans PostgreSQL. Cette collection est DERIVEE et reconstructible a tout
+// moment depuis la base (fonction SQL export_stats_joueurs()).
+// =============================================================================
+db.createCollection('stats_joueurs', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['_id', 'pseudo'],
+      properties: {
+        _id:       { bsonType: ['int', 'long'], description: 'joueurs.id cote PostgreSQL' },
+        pseudo:    { bsonType: 'string' },
+        roulette:  { bsonType: 'object' },
+        machine:   { bsonType: 'object' },
+        blackjack: { bsonType: 'object' }
+      }
+    }
+  }
+});
+
+print('[mongo] collection "stats_joueurs" prete');

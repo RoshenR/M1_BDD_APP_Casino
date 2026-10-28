@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api, session, type Joueur } from '../lib/api';
 import { useSolde } from '../lib/solde';
+import { useToast } from '../lib/toast';
+import { Jeton } from '../components/Jetons';
 
 interface Reponse {
   token: string;
@@ -9,26 +11,34 @@ interface Reponse {
   joueur: Joueur;
 }
 
+const DEMO = [
+  { pseudo: 'alice', jeton: 25, role: 'Joueuse' },
+  { pseudo: 'bob', jeton: 5, role: 'Joueur' },
+  { pseudo: 'carol', jeton: 100, role: 'Joueuse' },
+  { pseudo: 'dave', jeton: 1, role: 'Joueur' },
+  { pseudo: 'admin', jeton: 500, role: 'Administrateur' },
+];
+
 export function Connexion() {
-  const [email, setEmail] = useState('alice@casino.test');
-  const [motDePasse, setMotDePasse] = useState('motdepasse');
+  const [email, setEmail] = useState('');
+  const [motDePasse, setMotDePasse] = useState('');
   const [erreur, setErreur] = useState('');
   const [envoi, setEnvoi] = useState(false);
   const naviguer = useNavigate();
+  const lieu = useLocation();
   const { rafraichir } = useSolde();
+  const toast = useToast();
 
-  async function soumettre(e: FormEvent) {
-    e.preventDefault();
+  async function seConnecter(mail: string, mdp: string) {
     setErreur('');
     setEnvoi(true);
     try {
-      // Le mot de passe part en clair vers l'API (HTTPS en production), qui le
-      // transmet a authentifier(). La comparaison bcrypt se fait DANS PostgreSQL :
-      // ni l'API ni le front ne voient jamais le hash.
-      const r = await api.post<Reponse>('/auth/connexion', { email, motDePasse });
+      const r = await api.post<Reponse>('/auth/connexion', { email: mail, motDePasse: mdp });
       session.ouvrir(r.token, r.refresh, r.joueur);
       await rafraichir();
-      naviguer('/');
+      toast(`Bienvenue, ${r.joueur.pseudo}.`);
+      const retour = (lieu.state as { retour?: string } | null)?.retour;
+      naviguer(retour ?? '/');
     } catch (err) {
       setErreur((err as Error).message);
     } finally {
@@ -36,32 +46,67 @@ export function Connexion() {
     }
   }
 
+  function soumettre(e: FormEvent) {
+    e.preventDefault();
+    void seConnecter(email, motDePasse);
+  }
+
   return (
-    <div className="centre">
-      <form className="carte etroit" onSubmit={soumettre}>
-        <h1>Connexion</h1>
-        <p className="sous-titre">Comptes de demonstration : alice, bob, carol, dave, admin</p>
+    <div className="accueil">
+      <div className="accueil__form">
+        <h1>Se connecter</h1>
+        <p className="chapeau">Retrouvez vos jetons là où vous les avez laissés.</p>
 
-        {erreur && <div className="erreur">{erreur}</div>}
+        <form onSubmit={soumettre}>
+          {erreur && <p className="alerte" role="alert">{erreur}</p>}
 
-        <div className="champ">
-          <label htmlFor="email">Email</label>
-          <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </div>
+          <div className="champ">
+            <label htmlFor="email">Email</label>
+            <input id="email" type="email" autoComplete="email" value={email}
+                   onChange={(e) => setEmail(e.target.value)} required />
+          </div>
 
-        <div className="champ">
-          <label htmlFor="mdp">Mot de passe</label>
-          <input id="mdp" type="password" value={motDePasse} onChange={(e) => setMotDePasse(e.target.value)} required />
-        </div>
+          <div className="champ">
+            <label htmlFor="mdp">Mot de passe</label>
+            <input id="mdp" type="password" autoComplete="current-password" value={motDePasse}
+                   onChange={(e) => setMotDePasse(e.target.value)} required />
+          </div>
 
-        <button className="principal" type="submit" disabled={envoi} style={{ width: '100%' }}>
-          {envoi ? 'Verification...' : 'Se connecter'}
-        </button>
+          <button className="bouton bouton--principal bouton--grand" type="submit" disabled={envoi}>
+            {envoi ? 'Vérification…' : 'Se connecter'}
+          </button>
+        </form>
 
-        <p className="discret" style={{ marginTop: '1rem', textAlign: 'center' }}>
-          Pas encore de compte ? <Link to="/inscription">Inscrivez-vous</Link>
+        <p className="accueil__bas">
+          Pas encore de compte ? <Link to="/inscription">Créez-en un</Link> et recevez 100 jetons.
         </p>
-      </form>
+      </div>
+
+      <section className="demo" aria-labelledby="demo-titre">
+        <div className="table">
+          <p id="demo-titre" className="table__titre" style={{ textAlign: 'left' }}>
+            Comptes de démonstration
+          </p>
+          <div className="demo__liste">
+            {DEMO.map((d) => (
+              <button
+                key={d.pseudo}
+                type="button"
+                className="demo__compte"
+                disabled={envoi}
+                onClick={() => void seConnecter(`${d.pseudo}@casino.test`, 'motdepasse')}
+              >
+                <Jeton valeur={d.jeton} taille="s" />
+                <span>
+                  <strong>{d.pseudo}</strong>
+                  <small>{d.role}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+          <p>Un clic suffit pour entrer. Tous partagent le mot de passe <code>motdepasse</code>.</p>
+        </div>
+      </section>
     </div>
   );
 }

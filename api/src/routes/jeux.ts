@@ -20,7 +20,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { avecJoueur, requete } from '../infra/postgres.js';
-import { enregistrerReplay, lireReplay } from '../infra/mongo.js';
+import { enregistrerReplay, lireReplay, majStats } from '../infra/mongo.js';
 import { majClassement } from '../infra/redis.js';
 import { traduireErreurPg } from '../erreurs.js';
 
@@ -44,15 +44,16 @@ type Resultat = Record<string, unknown>;
 export async function routesJeux(app: FastifyInstance): Promise<void> {
   /**
    * Appelle une fonction de jeu dans le contexte du joueur, puis pousse les
-   * effets secondaires non transactionnels (replay Mongo, classement Redis).
-   * Ces deux derniers ne peuvent pas faire echouer la partie : elle est deja
-   * validee et comptabilisee par PostgreSQL.
+   * effets secondaires non transactionnels (replay et stats Mongo, classement
+   * Redis). Ils ne peuvent pas faire echouer la partie : elle est deja validee
+   * et comptabilisee par PostgreSQL.
    */
   async function jouer(
     joueurId: number,
     pseudo: string,
     sql: string,
     params: unknown[],
+    double = false,
   ): Promise<Resultat> {
     let resultat: Resultat;
     try {
@@ -76,6 +77,7 @@ export async function routesJeux(app: FastifyInstance): Promise<void> {
         coups: [resultat.etat ?? { joueur: resultat.joueur, croupier: resultat.croupier }],
       });
       await majClassement(pseudo, gain - mise);
+      await majStats(joueurId, pseudo, resultat, double);
     }
 
     return resultat;
@@ -127,6 +129,7 @@ export async function routesJeux(app: FastifyInstance): Promise<void> {
       req.joueur.pseudo,
       'SELECT casino.blackjack_action($1, $2, $3) AS r',
       [req.joueur.id, partieId, action],
+      action === 'doubler',
     );
   });
 

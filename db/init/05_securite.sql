@@ -106,6 +106,9 @@ GRANT USAGE ON SCHEMA casino TO casino_lecture, casino_joueur, casino_bi, casino
 -- Hierarchie : un joueur est aussi un lecteur du catalogue. Sans cela, les vues
 -- en security_invoker qui joignent jeux echoueraient sur « permission denied ».
 GRANT casino_lecture TO casino_joueur;
+-- Meme logique pour l'exploitation : export_stats_joueurs() appelle bj_total()
+-- et roulette_est_rouge(), accordees au groupe de lecture.
+GRANT casino_lecture TO casino_admin;
 
 
 -- =============================================================================
@@ -202,7 +205,9 @@ GRANT EXECUTE ON ROUTINE
   rembourser_partie(bigint, text),
   rafraichir_stats(),
   verifier_integrite_soldes(),
-  reparer_soldes()
+  reparer_soldes(),
+  detecter_collusion(int),
+  export_stats_joueurs()
 TO casino_admin;
 
 -- Lecture publique du catalogue : pas besoin de SECURITY DEFINER.
@@ -304,6 +309,23 @@ CREATE POLICY journal_audit_admin
   USING (true);
 
 COMMENT ON TABLE journal_audit IS 'RLS activee sans politique pour casino_joueur : zero ligne visible cote application (slide 56).';
+
+-- --- transferts : chacun voit ce qu'il a envoye et recu ----------------------
+-- Aucun GRANT n'est accorde a casino_joueur pour l'instant (l'API lit le grand
+-- livre) : la politique est prete si on en accorde un un jour.
+ALTER TABLE transferts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY transferts_du_joueur
+  ON transferts
+  FOR SELECT
+  TO casino_joueur
+  USING (expediteur_id = app_joueur_id() OR destinataire_id = app_joueur_id());
+
+CREATE POLICY transferts_admin
+  ON transferts
+  FOR ALL
+  TO casino_admin
+  USING (true);
 
 -- NOTE : on n'active PAS FORCE ROW LEVEL SECURITY. Le proprietaire doit rester
 -- exempte, sinon les fonctions SECURITY DEFINER (qui s'executent en tant que

@@ -244,3 +244,50 @@ WHERE j.statut = 'actif'
 GROUP BY j.id
 ORDER BY net DESC
 LIMIT 10;
+
+
+\echo ''
+\echo '################ Q9 · WITH RECURSIVE ... CYCLE — detecter la collusion ################'
+\echo ''
+-- Le motif qu'un casino traque : des jetons qui tournent en boucle entre
+-- joueurs (A -> B -> C -> A). C'est un parcours de graphe, sur la table
+-- transferts (expediteur -> destinataire).
+--
+-- Le danger d'une CTE recursive sur un graphe : une boucle la fait tourner a
+-- l'infini. La clause CYCLE (PostgreSQL 14+) marque est_cycle = true des qu'un
+-- noeud deja visite reapparait, et arrete la recursion sur ce chemin.
+
+WITH RECURSIVE flux AS (
+  SELECT expediteur_id AS de, destinataire_id AS vers, sum(montant) AS total
+  FROM transferts
+  GROUP BY 1, 2
+),
+parcours AS (
+  -- ancre : chaque expediteur est un point de depart
+  SELECT DISTINCT de AS depart, de AS courant, ARRAY[de] AS noeuds,
+         0 AS longueur, 0::numeric AS volume
+  FROM flux
+
+  UNION ALL
+
+  -- recursion : on suit les transferts sortants
+  SELECT p.depart, f.vers, p.noeuds || f.vers, p.longueur + 1, p.volume + f.total
+  FROM parcours p
+  JOIN flux f ON f.de = p.courant
+  WHERE p.longueur < 4
+) CYCLE courant SET est_cycle USING chemin
+SELECT noeuds, longueur, volume
+FROM parcours
+WHERE est_cycle
+  AND courant = depart                                   -- retour au point de depart
+  AND depart = (SELECT min(x) FROM unnest(noeuds) AS x)  -- un exemplaire par anneau
+ORDER BY volume DESC
+LIMIT 8;
+
+\echo ''
+\echo '-- Les trois anneaux places dans le seed arrivent en tete. Les boucles a deux'
+\echo '   joueurs suivantes sont des amis qui s echangent des jetons : le volume'
+\echo '   aide a trier le suspect du banal.'
+\echo ''
+\echo '-- Encapsule dans une fonction, avec les pseudos (utilisee par le back-office) :'
+SELECT * FROM detecter_collusion(4) LIMIT 5;

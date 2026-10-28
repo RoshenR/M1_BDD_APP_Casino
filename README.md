@@ -24,7 +24,6 @@ démarrage du serveur.
 | Front | http://localhost:5173 | — |
 | API | http://localhost:3000/sante | — |
 | pgAdmin | http://localhost:8080 | `admin@casino.example.com` / `admin` |
-| Neo4j Browser | http://localhost:7474 | `neo4j` / `casinocasino` |
 | PostgreSQL | `localhost:5432` | voir les rôles ci-dessous |
 
 **Comptes de démonstration** — mot de passe commun : `motdepasse`
@@ -76,11 +75,11 @@ C'est la question 4 du TP 03.
 
 | Module | Où | Ce qu'on y trouve |
 |---|---|---|
-| **01** Requêtes complexes | [`db/init/04_vues.sql`](db/init/04_vues.sql), [`db/demo/01-requetes-complexes.sql`](db/demo/01-requetes-complexes.sql) | `LEFT JOIN` avec filtre dans le `ON`, `NOT EXISTS` et le piège de `NOT IN`, CTE chaînées, `WITH RECURSIVE` sur l'arbre de parrainage, `FILTER`, `GROUPING SETS`, fenêtrage |
+| **01** Requêtes complexes | [`db/init/04_vues.sql`](db/init/04_vues.sql), [`db/demo/01-requetes-complexes.sql`](db/demo/01-requetes-complexes.sql) | `LEFT JOIN` avec filtre dans le `ON`, `NOT EXISTS` et le piège de `NOT IN`, CTE chaînées, `WITH RECURSIVE` sur l'arbre de parrainage, `WITH RECURSIVE … CYCLE` pour la détection de collusion, `FILTER`, `GROUPING SETS`, fenêtrage |
 | **02** Vues & matérialisées | [`db/init/04_vues.sql`](db/init/04_vues.sql), [`db/demo/02-vues.sql`](db/demo/02-vues.sql) | 8 vues, chaîne de dépendances, `WITH CHECK OPTION`, `mv_stats_quotidiennes` + index unique + `REFRESH CONCURRENTLY`, `security_invoker` |
 | **03** Index & plans | [`db/demo/03-index.sql`](db/demo/03-index.sql) | `EXPLAIN (ANALYZE, BUFFERS)` avant/après, index composite, index partiel, index sur expression, ce qu'un B-tree ne sait pas faire, coût en écriture, `pg_stat_user_indexes` |
 | **04** Fonctions & triggers | [`db/init/02_fonctions.sql`](db/init/02_fonctions.sql), [`db/init/03_triggers.sql`](db/init/03_triggers.sql) | 30+ fonctions PL/pgSQL, 8 triggers, exceptions métier, `RETURNS TABLE`, procédures, `to_jsonb` pour l'audit |
-| **05** Rôles, droits & RLS | [`db/init/05_securite.sql`](db/init/05_securite.sql), [`db/demo/05-securite.sql`](db/demo/05-securite.sql) | 8 rôles, `GRANT` colonne par colonne, 17 fonctions `SECURITY DEFINER`, RLS sur 5 tables, la fuite par les vues |
+| **05** Rôles, droits & RLS | [`db/init/05_securite.sql`](db/init/05_securite.sql), [`db/demo/05-securite.sql`](db/demo/05-securite.sql) | 8 rôles, `GRANT` colonne par colonne, 18 fonctions `SECURITY DEFINER`, RLS sur 6 tables, la fuite par les vues |
 
 ### Jouer les démonstrations
 
@@ -211,18 +210,19 @@ casino/
 ├── docker-compose.yml          7 services
 ├── db/
 │   ├── init/                   joués UNE FOIS au premier démarrage, dans l'ordre
-│   │   ├── 01_schema.sql       6 tables, contraintes d'abord
+│   │   ├── 01_schema.sql       7 tables, contraintes d'abord
 │   │   ├── 02_fonctions.sql    30+ fonctions et procédures PL/pgSQL
 │   │   ├── 03_triggers.sql     8 déclencheurs
 │   │   ├── 04_vues.sql         8 vues + 1 vue matérialisée
 │   │   ├── 05_securite.sql     rôles, GRANT, SECURITY DEFINER, RLS
 │   │   └── 06_seed.sql         remplissage en SQL pur (generate_series)
 │   ├── demo/                   les 5 scripts de soutenance
-│   ├── mongo-init/             collection replays + validateur + TTL
+│   ├── migrations/             mise à niveau d'une base déjà initialisée
+│   ├── mongo-init/             collections replays et stats_joueurs, validateurs
 │   └── pgadmin-servers.json    3 connexions préconfigurées
 ├── api/                        Fastify + TypeScript, SQL brut, aucun ORM
 │   └── src/
-│       ├── infra/              postgres · redis · mongo · neo4j
+│       ├── infra/              postgres, redis, mongo
 │       ├── routes/             auth · profil · jeux · stats · admin
 │       └── erreurs.ts          codes PostgreSQL → codes HTTP
 └── web/                        React + Vite, volontairement simple
@@ -264,7 +264,10 @@ joueurs ──┬── parrain_id ──> joueurs        arbre, parcouru en WIT
           │       │
           └──< transactions >─────────┘     grand livre append-only
           │
-          └──< amities                      graphe social (dupliqué dans Neo4j)
+          ├──< amities                      graphe social
+          │
+          └──< transferts >── joueurs        qui a payé qui : graphe orienté,
+                                             parcouru en WITH RECURSIVE … CYCLE
 
 journal_audit                                alimenté par triggers AFTER
 ```
@@ -325,10 +328,15 @@ Le casino ne peut pas choisir le résultat après coup : le hash l'engage.
 
 ---
 
-## Les trois NoSQL, et pourquoi
+## Redis et MongoDB, et pourquoi
 
 Chacun répond à une question que PostgreSQL traite moins bien. Aucun ne stocke
 d'argent : **la vérité reste dans PostgreSQL**, sous contrainte et sous transaction.
+
+> Le projet utilisait aussi Neo4j. Nous l'avons retiré sur l'avis de notre
+> professeur : avec quelques joueurs réels, le graphe n'a pas assez de relations
+> pour justifier une base dédiée. Ce qu'il faisait est désormais en SQL (voir
+> [Détection de collusion](#détection-de-collusion-en-sql)).
 
 ### Redis — sessions, rate-limiting, classement temps réel
 
@@ -343,56 +351,94 @@ matérialisée. La page `/classement` affiche les deux côte à côte :
 
 Trois outils, trois compromis. Aucun n'est « le bon ».
 
-### MongoDB — replay détaillé des parties
+### MongoDB — statistiques de jeu et replays
 
-La forme du document change d'un jeu à l'autre : une main de blackjack est une
-*suite* de coups, un spin de roulette un événement unique, un tour de machine trois
-rouleaux. Une table unique finirait en EAV fourre-tout — le défaut volontaire que le
-cours pointe sur `evenement_attributs`. Ces documents sont écrits en masse, lus un
-par un, **jamais joints**, et purgés par TTL au bout d'un an.
+Le partage est net :
 
-Une panne Mongo fait perdre des replays, pas un jeton :
-[`api/src/infra/mongo.ts`](api/src/infra/mongo.ts) attrape et continue.
+| | PostgreSQL | MongoDB |
+|---|---|---|
+| Ce qu'on y range | **l'argent** : mises, gains, soldes, résultat net | **le comportement de jeu** |
+| Exigence | exact, transactionnel, contraint | forme différente pour chaque jeu |
+| Exemple | `v_stats_joueur` : parties, total misé, net | numéros sortis, combinaisons obtenues, mains dépassées |
 
-### Neo4j — parrainage et détection de collusion
+**Collection `stats_joueurs`** — un document par joueur, une branche par jeu, et
+chaque branche a sa propre forme :
 
-Le même graphe existe dans PostgreSQL. L'intérêt est la **comparaison** :
-
-```cypher
-MATCH (moi:Joueur {id: 42})-[:PARRAINE*1..5]->(f:Joueur) RETURN f
+```js
+{ _id: 2, pseudo: "alice",
+  roulette:  { parties: 60, numeros: { "8": 5, "17": 1, … }, couleurs: { rouge: 35, … }, paris: { plein: 34, rouge: 16, … } },
+  machine:   { parties: 3, combinaisons: { paire: 2, rien: 1 }, meilleur_multiplicateur: 1 },
+  blackjack: { parties: 2, resultats: { gagne: 1, perdu: 1 }, depasses_21: 1, doubles: 1, somme_totaux: 41 } }
 ```
+
+En SQL, il faudrait trois tables, ou une table clé/valeur fourre-tout — le défaut
+volontaire que le cours pointe sur `evenement_attributs`.
+
+- **Écriture** : après chaque partie, l'API fait **un seul** `updateOne` avec des
+  `$inc` sur des clés dynamiques (`roulette.numeros.17`). C'est atomique côté
+  serveur, avec `upsert` pour la première partie.
+  ([`api/src/infra/mongo.ts`](api/src/infra/mongo.ts), `majStats`)
+- **Lecture** : `GET /moi/stats-jeux`, affiché dans l'onglet **Mes stats** du profil
+  (tapis de fréquence des numéros, couleurs, combinaisons, taux de dépassement).
+- **Reconstruction** : ces stats sont *dérivées*. La fonction SQL
+  `export_stats_joueurs()` fabrique directement les 10 000 documents en `jsonb`
+  grâce à `jsonb_object_agg`, en 2 à 3 secondes. L'API la lance au démarrage si la
+  collection est vide, et à la demande avec `POST /admin/mongo/reconstruire`.
+
+Les parties générées par le seed n'ont qu'un état sommaire : au blackjack, on ne
+connaît pas leurs mains dépassées ni leurs doubles. Les parties jouées dans
+l'application sont complètes.
+
+> **Une leçon de performance au passage.** La première version de
+> `export_stats_joueurs()` joignait les 266 000 parties brutes à des agrégats par
+> joueur : elle ne terminait pas en 5 minutes. Agréger d'abord, joindre ensuite :
+> 1,9 seconde.
+
+**Collection `replays`** — le détail de chaque partie (coups du blackjack, rouleaux
+de la machine), écrit en masse, lu un par un, **jamais joint**, et purgé par TTL au
+bout d'un an.
+
+Une panne Mongo fait perdre des stats et des replays, pas un jeton :
+[`api/src/infra/mongo.ts`](api/src/infra/mongo.ts) attrape l'erreur et continue.
+
+### Détection de collusion, en SQL
+
+Des jetons qui tournent en boucle entre joueurs (A → B → C → A) sont le motif
+qu'un vrai casino traque. La table `transferts` forme un graphe orienté « qui a
+payé qui », que l'on parcourt en `WITH RECURSIVE`.
+
+Le danger d'une CTE récursive sur un graphe : une boucle la fait tourner à
+l'infini. La clause **`CYCLE`** (PostgreSQL 14+) marque `est_cycle = true` dès
+qu'un joueur déjà visité réapparaît, et arrête la récursion sur ce chemin :
+
 ```sql
-WITH RECURSIVE descendance AS (
-  SELECT id, pseudo, 1 AS niveau FROM joueurs WHERE parrain_id = 42
+WITH RECURSIVE parcours AS (
+  SELECT DISTINCT expediteur_id AS depart, expediteur_id AS courant,
+         ARRAY[expediteur_id] AS noeuds, 0 AS longueur
+  FROM transferts
   UNION ALL
-  SELECT j.id, j.pseudo, d.niveau + 1
-  FROM joueurs j JOIN descendance d ON j.parrain_id = d.id
-  WHERE d.niveau < 5
-) SELECT * FROM descendance;
+  SELECT p.depart, t.destinataire_id, p.noeuds || t.destinataire_id, p.longueur + 1
+  FROM parcours p JOIN transferts t ON t.expediteur_id = p.courant
+  WHERE p.longueur < 4
+) CYCLE courant SET est_cycle USING chemin
+SELECT noeuds FROM parcours
+WHERE est_cycle AND courant = depart;
 ```
 
-La route `/moi/parrainage` renvoie **les deux résultats** pour les mettre en regard.
-
-Là où Cypher gagne vraiment, c'est la détection de **cycles** de transferts —
-A → B → C → A, le motif qu'un vrai casino traque :
-
-```cypher
-MATCH chemin = (a:Joueur)-[:TRANSFERE*2..4]->(a)
-RETURN [n IN nodes(chemin) | n.pseudo] AS boucle,
-       reduce(s = 0, r IN relationships(chemin) | s + r.total) AS volume
-ORDER BY volume DESC
-```
-
-En SQL, il faudrait une CTE récursive avec détection de boucle et garde-fou de
-profondeur. En Cypher, c'est un motif.
-
-Le seed place **trois anneaux volontaires** pour que la démonstration ait de quoi
-trouver. Projetez d'abord le graphe (connecté en `admin`) :
+La version complète est encapsulée dans `detecter_collusion()`, avec les pseudos, le
+volume, et un seul exemplaire par anneau. Le seed place **trois anneaux
+volontaires** ; ils arrivent en tête :
 
 ```
-POST /admin/neo4j/synchroniser     →  { joueurs: 10005, transferts: 1597 }
-GET  /admin/collusion              →  les cycles, triés par volume
+GET /admin/collusion
+  joueur196 → joueur197 → joueur198 → joueur199 → joueur196    2 000 jetons
+  joueur96  → joueur97  → joueur98  → joueur96                 1 500 jetons
+  joueur296 → joueur297 → joueur296                            1 000 jetons
 ```
+
+Viennent ensuite des allers-retours entre deux amis, plus banals : le volume aide à
+trier le suspect du courant. Démonstration : question 9 de
+[`db/demo/01-requetes-complexes.sql`](db/demo/01-requetes-complexes.sql).
 
 ---
 
@@ -408,8 +454,9 @@ GET  /admin/collusion              →  les cycles, triés par volume
 | `POST` | `/moi/transfert` | virement entre joueurs, atomique |
 | `GET` | `/moi/transactions` | grand livre — **sans `WHERE joueur_id`**, c'est la RLS qui filtre |
 | `POST` | `/moi/exclusion` · `/moi/limite` | jeu responsable |
-| `GET` | `/moi/parrainage` | PostgreSQL **et** Neo4j, côte à côte |
-| `GET` | `/moi/replays` | MongoDB |
+| `GET` | `/moi/parrainage` | descendance par `WITH RECURSIVE` |
+| `GET` | `/moi/stats-jeux` | statistiques de jeu (MongoDB) |
+| `GET` | `/moi/replays` | détail des parties (MongoDB) |
 | `POST` | `/jeux/roulette` · `/jeux/machine` · `/jeux/blackjack` | |
 | `POST` | `/jeux/blackjack/action` | tirer · rester · doubler |
 | `GET` | `/parties/:id/verification` | provably fair |
@@ -420,7 +467,8 @@ GET  /admin/collusion              →  les cycles, triés par volume
 | `POST` | `/admin/statistiques/rafraichir` | `REFRESH CONCURRENTLY` |
 | `GET` | `/admin/audit` | journal (invisible pour `casino_api`) |
 | `GET` | `/admin/index` · `/admin/requetes-lentes` | module 03 en production |
-| `GET` | `/admin/collusion` | Cypher |
+| `GET` | `/admin/collusion` | anneaux de transferts, `WITH RECURSIVE … CYCLE` |
+| `POST` | `/admin/mongo/reconstruire` | régénère `stats_joueurs` depuis PostgreSQL |
 
 Exemple complet :
 
@@ -464,11 +512,16 @@ VALUES (4, 'mise', -10, 1000);
 
 **Ne jamais rejouer `02_fonctions.sql` seul.** Un `CREATE OR REPLACE FUNCTION` sans
 clause `SECURITY DEFINER` remet la fonction en `SECURITY INVOKER` et efface son
-`search_path` : toute la sécurité est désarmée en silence. Rejouez toujours
-`05_securite.sql` derrière.
+`search_path` : toute la sécurité est désarmée en silence. Et `05_securite.sql` ne se
+rejoue pas non plus, car il crée des rôles qui existent déjà.
+
+Pour recharger les fonctions sur une base existante, passez par la migration. Elle
+recharge `02_fonctions.sql`, puis réapplique propriétaire, `SECURITY DEFINER`,
+`search_path` et droits. Elle est rejouable sans risque, et c'est aussi elle qui met
+à niveau une base initialisée avant le 28 octobre (table `transferts`) :
 
 ```bash
-docker compose exec postgres psql -U postgres -d casino -f /docker-entrypoint-initdb.d/02_fonctions.sql -f /docker-entrypoint-initdb.d/05_securite.sql
+docker compose exec postgres psql -U postgres -d casino -f /db/migrations/2026-10-28_transferts_et_stats_mongo.sql
 ```
 
 Vérifications utiles :
@@ -501,7 +554,8 @@ cd api && npx tsc --noEmit
 | L'application est lente | Les index ne sont pas créés | Jouez `/db/demo/03-index.sql` — c'est voulu |
 | `permission denied for function app_joueur_id` | RLS évaluée sans `EXECUTE` | Rejouez `05_securite.sql` |
 | `Vous avez déjà une main en cours` | Blackjack non terminé | Tirez ou restez, ou `CALL rembourser_partie(id)` en admin |
-| `/admin/collusion` renvoie vide | Neo4j pas encore peuplé | `POST /admin/neo4j/synchroniser` |
+| L'onglet « Mes stats » est vide | Collection Mongo vide | Redémarrez l'API ou `POST /admin/mongo/reconstruire` |
+| `relation "transferts" does not exist` | Base initialisée avant le 28/10 | Jouez la migration ci-dessous |
 | `/classement/live` vide | Redis n'a rien depuis son démarrage | Jouez quelques parties — c'est la démonstration du caractère volatil |
 | Le seed échoue | Volume corrompu | `docker compose down -v` puis relancez |
 
@@ -514,9 +568,10 @@ cd api && npx tsc --noEmit
 | Joueurs | 10 005 |
 | Parties | 800 000 |
 | Mouvements | ~1,2 M |
-| Tables | 6 |
+| Tables | 7 |
 | Vues | 8 + 1 matérialisée |
 | Fonctions et procédures | 30+ |
 | Déclencheurs | 8 |
 | Rôles PostgreSQL | 8 |
-| Politiques RLS | 8 sur 5 tables |
+| Politiques RLS | 10 sur 6 tables |
+| Collections MongoDB | 2 (`stats_joueurs`, `replays`) |

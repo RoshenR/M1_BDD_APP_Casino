@@ -10,7 +10,6 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requete } from '../infra/postgres.js';
-import { synchroniserJoueur } from '../infra/neo4j.js';
 import {
   compterTentative,
   enregistrerSession,
@@ -75,12 +74,6 @@ export async function routesAuth(app: FastifyInstance): Promise<void> {
       throw traduireErreurPg(err);
     }
     if (!cree) throw new ErreurHttp(500, 'Inscription impossible');
-
-    // Projection dans le graphe : best effort, hors transaction SQL.
-    const [parrain] = corps.codeParrain
-      ? await requete<{ id: number }>('SELECT id FROM casino.joueurs WHERE pseudo = $1', [corps.codeParrain])
-      : [];
-    await synchroniserJoueur(cree.joueur_id, cree.pseudo, parrain?.id ?? null);
 
     const jetons = await emettreJetons({ joueur_id: cree.joueur_id, pseudo: cree.pseudo, role: 'joueur' });
     return reply.code(201).send({ ...jetons, solde: cree.solde });

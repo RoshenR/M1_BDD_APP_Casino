@@ -7,8 +7,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { avecJoueur, requete } from '../infra/postgres.js';
-import { lireReplays } from '../infra/mongo.js';
-import { cypher, enregistrerTransfert } from '../infra/neo4j.js';
+import { lireReplays, lireStats } from '../infra/mongo.js';
 import { ErreurHttp, traduireErreurPg } from '../erreurs.js';
 
 const schemaMontant = z.object({ montant: z.number().positive().max(10_000) });
@@ -99,10 +98,6 @@ export async function routesProfil(app: FastifyInstance): Promise<void> {
     } catch (err) {
       throw traduireErreurPg(err);
     }
-
-    // Arete ponderee dans le graphe : c'est elle que la detection de collusion
-    // parcourt a la recherche de cycles.
-    await enregistrerTransfert(req.joueur.id, destinataire.id, montant);
     return solde(req.joueur.id);
   });
 
@@ -134,8 +129,15 @@ export async function routesProfil(app: FastifyInstance): Promise<void> {
     return stats ?? null;
   });
 
-  /** Replays detailles : c'est la seule route servie par MongoDB. */
+  /** Replays detailles, servis par MongoDB. */
   app.get('/moi/replays', proteger, async (req) => lireReplays(req.joueur.id, 20));
+
+  /**
+   * Statistiques de jeu, servies par MongoDB : un document par joueur, une
+   * branche par jeu, chacune avec sa propre forme. Les chiffres d'argent
+   * (mises, net) restent ceux de PostgreSQL, dans /moi/statistiques.
+   */
+  app.get('/moi/stats-jeux', proteger, async (req) => (await lireStats(req.joueur.id)) ?? null);
 
   // --- Jeu responsable -------------------------------------------------------
   // Deux regles que la BASE fait respecter, pas le front :
@@ -163,10 +165,10 @@ export async function routesProfil(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // --- Parrainage : le meme graphe, deux moteurs -----------------------------
+  // --- Parrainage : WITH RECURSIVE ------------------------------------------
   app.get('/moi/parrainage', proteger, async (req) => {
-    // Cote PostgreSQL : WITH RECURSIVE (la vue v_arbre_parrainage).
-    const filleuls = await requete(
+    // Toute la descendance, generation par generation (module 01).
+    return requete(
       `WITH RECURSIVE descendance AS (
          SELECT id, pseudo, 1 AS niveau
          FROM casino.joueurs WHERE parrain_id = $1
@@ -180,17 +182,6 @@ export async function routesProfil(app: FastifyInstance): Promise<void> {
        FROM descendance GROUP BY niveau ORDER BY niveau`,
       [req.joueur.id],
     );
-
-    // Cote Neo4j : la meme question en Cypher, longueur de chemin variable.
-    const graphe = await cypher(
-      `MATCH (moi:Joueur {id: $id})-[:PARRAINE*1..5]->(f:Joueur)
-       RETURN length(shortestPath((moi)-[:PARRAINE*]->(f))) AS niveau,
-              count(f) AS nb
-       ORDER BY niveau`,
-      { id: req.joueur.id },
-    );
-
-    return { postgres: filleuls, neo4j: graphe };
   });
 
   // ---------------------------------------------------------------------------

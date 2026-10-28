@@ -192,8 +192,9 @@ $$;
 -- Cote application il faudrait BEGIN / 4 requetes / COMMIT, avec la gestion
 -- d'erreur qui va avec. Ici, un seul CALL, et l'atomicite est acquise.
 --
--- C'est aussi ce qui alimente le graphe de detection de collusion dans Neo4j :
--- trois joueurs qui se renvoient les memes jetons en boucle forment un cycle.
+-- Le transfert est aussi enregistre dans la table transferts : trois joueurs
+-- qui se renvoient les memes jetons en boucle forment un cycle, que
+-- detecter_collusion() retrouve en WITH RECURSIVE ... CYCLE.
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE transferer_jetons(
   p_de      int,
@@ -243,6 +244,9 @@ BEGIN
   -- Si le debit echoue (solde insuffisant), le credit n'a jamais lieu.
   PERFORM _mouvement(p_de, 'transfert_envoye', -p_montant, NULL,
                      'Transfert vers ' || v_pseudo_vers || coalesce(' : ' || p_message, ''));
+  INSERT INTO transferts (expediteur_id, destinataire_id, montant, message)
+  VALUES (p_de, p_vers, p_montant, p_message);
+
   PERFORM _mouvement(p_vers, 'transfert_recu', p_montant, NULL,
                      'Transfert de ' || v_pseudo_de || coalesce(' : ' || p_message, ''));
 END;
@@ -1299,3 +1303,208 @@ AS $$
   ORDER BY 4 DESC, j.id
   LIMIT p_limite
 $$;
+
+
+
+-- =============================================================================
+-- DETECTION DE COLLUSION — WITH RECURSIVE ... CYCLE
+-- =============================================================================
+-- Des jetons qui tournent en boucle (A -> B -> C -> A) sont le motif classique
+-- de la collusion : blanchiment, ou vidage d'un bonus a plusieurs.
+--
+-- On parcourt le graphe des transferts depuis chaque joueur. La clause CYCLE
+-- (PostgreSQL 14+) fait deux choses a notre place :
+--   · elle marque est_cycle = true des qu'un joueur deja visite reapparait
+--   · elle arrete la recursion sur ce chemin — sans elle, une boucle
+--     ferait tourner la requete a l'infini
+--
+-- Un anneau de 3 joueurs est trouve 3 fois (une fois depuis chacun) : on ne
+-- garde que le parcours qui part du plus petit identifiant de l'anneau.
+-- =============================================================================
+CREATE OR REPLACE FUNCTION detecter_collusion(p_longueur_max int DEFAULT 4)
+RETURNS TABLE (boucle text[], longueur int, volume numeric, nb_transferts bigint)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH RECURSIVE flux AS (
+    -- Une arete par couple (expediteur, destinataire), ponderee par le volume.
+    SELECT expediteur_id AS de, destinataire_id AS vers,
+           sum(montant) AS total, count(*) AS nb
+    FROM transferts
+    GROUP BY 1, 2
+  ),
+  parcours AS (
+    -- Ancre : chaque expediteur est un point de depart possible.
+    SELECT DISTINCT de AS depart, de AS courant,
+           ARRAY[de] AS noeuds, 0 AS longueur, 0::numeric AS volume, 0::bigint AS nb
+    FROM flux
+
+    UNION ALL
+
+    -- Recursion : on suit les transferts sortants du joueur courant.
+    SELECT p.depart, f.vers, p.noeuds || f.vers, p.longueur + 1,
+           p.volume + f.total, p.nb + f.nb
+    FROM parcours p
+    JOIN flux f ON f.de = p.courant
+    WHERE p.longueur < p_longueur_max
+  ) CYCLE courant SET est_cycle USING chemin
+  SELECT ARRAY(SELECT j.pseudo
+               FROM unnest(p.noeuds) WITH ORDINALITY AS n(id, ordre)
+               JOIN joueurs j ON j.id = n.id
+               ORDER BY n.ordre),
+         p.longueur, p.volume, p.nb
+  FROM parcours p
+  WHERE p.est_cycle
+    AND p.courant = p.depart                                   -- revenu au point de depart
+    AND p.depart = (SELECT min(x) FROM unnest(p.noeuds) AS x)  -- un seul exemplaire par anneau
+  ORDER BY p.volume DESC
+$$;
+
+COMMENT ON FUNCTION detecter_collusion(int) IS 'Anneaux de transferts (A -> B -> ... -> A) par WITH RECURSIVE ... CYCLE. Reserve a l''administration.';
+
+
+-- =============================================================================
+-- EXPORT VERS MONGODB — PostgreSQL fabrique les documents
+-- =============================================================================
+-- Les statistiques de jeu de chaque joueur vivent dans MongoDB (collection
+-- stats_joueurs) parce que leur forme change d'un jeu a l'autre. Mais elles
+-- sont DERIVEES des parties : cette fonction les reconstruit depuis la seule
+-- source de verite, sous forme de documents jsonb prets a inserer.
+--
+-- jsonb_object_agg transforme des lignes (numero, nombre) en un objet
+-- {"17": 3, "0": 1, ...} : c'est le pont entre le modele relationnel et le
+-- modele document.
+--
+-- Les parties generees par le seed ont un etat sommaire : la combinaison de la
+-- machine y est deduite du multiplicateur, le detail des mains de blackjack
+-- n'y existe pas. Les parties jouees dans l'application sont completes.
+-- =============================================================================
+CREATE OR REPLACE FUNCTION export_stats_joueurs()
+RETURNS TABLE (joueur_id int, document jsonb)
+LANGUAGE sql
+STABLE
+AS $$
+  -- Regle de performance : chaque CTE AGREGE d'abord par joueur (10 000 lignes
+  -- au plus), et on ne joint qu'ensuite. Joindre les 266 000 parties brutes a
+  -- un agregat pousse le planificateur vers des boucles imbriquees : la
+  -- premiere version de cette fonction ne terminait pas en 5 minutes.
+  WITH base AS MATERIALIZED (
+    SELECT p.joueur_id, g.code, p.mise, p.gain, p.resultat, p.etat
+    FROM parties p
+    JOIN jeux g ON g.id = p.jeu_id
+    WHERE p.statut = 'terminee'
+  ),
+
+  -- --- Roulette -------------------------------------------------------------
+  rl AS MATERIALIZED (
+    SELECT joueur_id, mise, gain,
+           (etat->>'numero')::int AS numero,
+           split_part(coalesce(etat->>'pari', 'rouge'), ':', 1) AS type_pari
+    FROM base WHERE code = 'roulette'
+  ),
+  rl_totaux AS (
+    SELECT joueur_id, jsonb_build_object(
+      'parties',        count(*),
+      'mise',           sum(mise),
+      'gain',           sum(gain),
+      'gagnees',        count(*) FILTER (WHERE gain > 0),
+      'plus_gros_gain', max(gain),
+      'couleurs', jsonb_build_object(
+        'rouge', count(*) FILTER (WHERE numero <> 0 AND roulette_est_rouge(numero)),
+        'noir',  count(*) FILTER (WHERE numero <> 0 AND NOT roulette_est_rouge(numero)),
+        'vert',  count(*) FILTER (WHERE numero = 0))
+    ) AS doc
+    FROM rl GROUP BY joueur_id
+  ),
+  -- jsonb_object_agg : des lignes (numero, nombre) deviennent {"17": 3, "0": 1}
+  rl_numeros AS (
+    SELECT joueur_id, jsonb_object_agg(numero::text, nb) AS numeros
+    FROM (SELECT joueur_id, numero, count(*) AS nb FROM rl GROUP BY 1, 2) x
+    GROUP BY joueur_id
+  ),
+  rl_paris AS (
+    SELECT joueur_id, jsonb_object_agg(type_pari, nb) AS paris
+    FROM (SELECT joueur_id, type_pari, count(*) AS nb FROM rl GROUP BY 1, 2) x
+    GROUP BY joueur_id
+  ),
+
+  -- --- Machine a sous -------------------------------------------------------
+  mc AS MATERIALIZED (
+    SELECT joueur_id, mise, gain,
+           coalesce(etat->>'combinaison',
+             CASE round(gain / mise)
+               WHEN 1000 THEN 'trois sept'     WHEN 200 THEN 'trois diamant'
+               WHEN 60   THEN 'trois cloche'   WHEN 25  THEN 'trois pasteque'
+               WHEN 12   THEN 'trois raisin'   WHEN 8   THEN 'trois citron'
+               WHEN 5    THEN 'trois cerise'   WHEN 1   THEN 'paire'
+               ELSE 'rien' END) AS combinaison
+    FROM base WHERE code = 'machine'
+  ),
+  mc_totaux AS (
+    SELECT joueur_id, jsonb_build_object(
+      'parties',                 count(*),
+      'mise',                    sum(mise),
+      'gain',                    sum(gain),
+      'meilleur_multiplicateur', max(round(gain / mise))
+    ) AS doc
+    FROM mc GROUP BY joueur_id
+  ),
+  mc_comb AS (
+    SELECT joueur_id, jsonb_object_agg(combinaison, nb) AS combinaisons
+    FROM (SELECT joueur_id, combinaison, count(*) AS nb FROM mc GROUP BY 1, 2) x
+    GROUP BY joueur_id
+  ),
+
+  -- --- Blackjack ------------------------------------------------------------
+  -- Parties jouees dans l'application : etat = cartes (on recalcule le total).
+  -- Parties du seed : etat = totaux deja calcules.
+  bj AS MATERIALIZED (
+    SELECT joueur_id, mise, gain, resultat, etat->>'double' = 'true' AS double,
+           CASE WHEN etat ? 'joueur'
+                THEN bj_total(ARRAY(SELECT jsonb_array_elements_text(etat->'joueur')::int))
+                ELSE (etat->>'total_joueur')::int END AS total_joueur,
+           CASE WHEN etat ? 'croupier'
+                THEN bj_total(ARRAY(SELECT jsonb_array_elements_text(etat->'croupier')::int))
+                ELSE (etat->>'total_croupier')::int END AS total_croupier,
+           CASE WHEN etat ? 'joueur' THEN jsonb_array_length(etat->'joueur') - 2 ELSE 0 END AS tirees
+    FROM base WHERE code = 'blackjack'
+  ),
+  bj_totaux AS (
+    SELECT joueur_id, jsonb_build_object(
+      'parties',          count(*),
+      'mise',             sum(mise),
+      'gain',             sum(gain),
+      'depasses_21',      count(*) FILTER (WHERE total_joueur > 21),
+      'croupier_depasse', count(*) FILTER (WHERE total_croupier > 21),
+      'doubles',          count(*) FILTER (WHERE double),
+      'somme_totaux',     sum(total_joueur),
+      'cartes_tirees',    sum(tirees)
+    ) AS doc
+    FROM bj GROUP BY joueur_id
+  ),
+  bj_res AS (
+    SELECT joueur_id, jsonb_object_agg(resultat, nb) AS resultats
+    FROM (SELECT joueur_id, resultat, count(*) AS nb FROM bj GROUP BY 1, 2) x
+    GROUP BY joueur_id
+  )
+
+  -- Assemblage : uniquement des jointures entre agregats d'au plus 10 000 lignes.
+  SELECT j.id,
+         jsonb_strip_nulls(jsonb_build_object(
+           '_id',       j.id,
+           'pseudo',    j.pseudo,
+           'roulette',  rt.doc || jsonb_build_object('numeros', rn.numeros, 'paris', rp.paris),
+           'machine',   mt.doc || jsonb_build_object('combinaisons', mcb.combinaisons),
+           'blackjack', bt.doc || jsonb_build_object('resultats', br.resultats)))
+  FROM joueurs j
+  LEFT JOIN rl_totaux  rt  ON rt.joueur_id  = j.id
+  LEFT JOIN rl_numeros rn  ON rn.joueur_id  = j.id
+  LEFT JOIN rl_paris   rp  ON rp.joueur_id  = j.id
+  LEFT JOIN mc_totaux  mt  ON mt.joueur_id  = j.id
+  LEFT JOIN mc_comb    mcb ON mcb.joueur_id = j.id
+  LEFT JOIN bj_totaux  bt  ON bt.joueur_id  = j.id
+  LEFT JOIN bj_res     br  ON br.joueur_id  = j.id
+  WHERE coalesce(rt.doc, mt.doc, bt.doc) IS NOT NULL
+$$;
+
+COMMENT ON FUNCTION export_stats_joueurs() IS 'Construit un document jsonb par joueur pour la collection MongoDB stats_joueurs. Reserve a l''administration.';

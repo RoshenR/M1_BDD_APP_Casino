@@ -79,7 +79,8 @@ services:
       retries: 20
 
   # ---------------------------------------------------------------------------
-  # MongoDB - replay detaille des parties (documents de forme variable).
+  # MongoDB - replays des parties et statistiques de jeu par joueur
+  # (documents dont la forme change d'un jeu a l'autre).
   # Journal jetable : une panne ici ne coute aucun jeton.
   # ---------------------------------------------------------------------------
   mongo:
@@ -101,28 +102,6 @@ services:
       retries: 20
 
   # ---------------------------------------------------------------------------
-  # Neo4j - graphe de parrainage et detection de collusion (cycles de transferts).
-  # Projection en lecture : la verite reste dans PostgreSQL.
-  # ---------------------------------------------------------------------------
-  neo4j:
-    image: neo4j:5-community
-    container_name: casino_neo4j
-    environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-casinocasino}
-      NEO4J_server_memory_heap_max__size: 512M
-      NEO4J_PLUGINS: '["apoc"]'
-    ports:
-      - "7474:7474"   # navigateur
-      - "7687:7687"   # bolt
-    volumes:
-      - neo4jdata:/data
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:7474 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
-  # ---------------------------------------------------------------------------
   # API - Fastify + TypeScript, SQL brut, aucun ORM.
   # Se connecte avec casino_api : EXECUTE sur les fonctions metier et rien de plus.
   # ---------------------------------------------------------------------------
@@ -141,9 +120,6 @@ services:
       DATABASE_URL_ADMIN: postgres://casino_superviseur:${SUPERVISEUR_DB_PASSWORD:-super_secret}@postgres:5432/casino
       REDIS_URL: redis://redis:6379
       MONGO_URL: mongodb://${MONGO_USER:-casino}:${MONGO_PASSWORD:-casino}@mongo:27017/casino?authSource=admin
-      NEO4J_URL: bolt://neo4j:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-casinocasino}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-a-changer-en-production}
       CORS_ORIGIN: http://localhost:5173
     ports:
@@ -156,8 +132,6 @@ services:
       redis:
         condition: service_healthy
       mongo:
-        condition: service_healthy
-      neo4j:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
@@ -183,4 +157,3 @@ volumes:
   pgadmindata:
   redisdata:
   mongodata:
-  neo4jdata:

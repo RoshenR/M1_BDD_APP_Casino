@@ -15,7 +15,7 @@
     "demo:4": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/04-fonctions-triggers.sql",
     "demo:5": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/05-securite.sql",
     "index": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/03-index.sql",
-    "securite:recharger": "docker compose exec postgres psql -U postgres -d casino -f /docker-entrypoint-initdb.d/02_fonctions.sql -f /docker-entrypoint-initdb.d/05_securite.sql",
+    "migrer": "docker compose exec postgres psql -U postgres -d casino -f /db/migrations/2026-10-28_transferts_et_stats_mongo.sql",
     "typecheck": "cd api && npx tsc --noEmit && cd ../web && npx tsc -b --noEmit"
   }
 }

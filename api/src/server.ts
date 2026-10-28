@@ -16,13 +16,12 @@ import { config } from './config.js';
 import { ErreurHttp } from './erreurs.js';
 import { fermerPostgres, requete } from './infra/postgres.js';
 import { fermerRedis, redis } from './infra/redis.js';
-import { connecterMongo, fermerMongo } from './infra/mongo.js';
-import { connecterNeo4j, fermerNeo4j } from './infra/neo4j.js';
+import { compterStats, connecterMongo, fermerMongo } from './infra/mongo.js';
 import { routesAuth } from './routes/auth.js';
 import { routesProfil } from './routes/profil.js';
 import { routesJeux } from './routes/jeux.js';
 import { routesStats } from './routes/stats.js';
-import { fermerAdmin, routesAdmin } from './routes/admin.js';
+import { fermerAdmin, reconstruireStatsMongo, routesAdmin } from './routes/admin.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -108,10 +107,17 @@ await app.register(routesStats);
 await app.register(routesAdmin);
 
 // --- Demarrage ---------------------------------------------------------------
-// Mongo et Neo4j sont facultatifs : une panne de l'un d'eux ne doit pas empecher
-// de jouer, puisqu'ils ne portent que du derive.
+// Mongo est facultatif : une panne ne doit pas empecher de jouer, puisqu'il ne
+// porte que du derive (replays, statistiques de jeu).
 await connecterMongo().catch((e) => app.log.warn(`Mongo indisponible : ${e.message}`));
-await connecterNeo4j().catch((e) => app.log.warn(`Neo4j indisponible : ${e.message}`));
+
+// Premier demarrage : la collection stats_joueurs est vide alors que la base
+// contient deja 800 000 parties. On la reconstruit en tache de fond.
+if ((await compterStats()) === 0) {
+  reconstruireStatsMongo()
+    .then((r) => app.log.info(`Stats Mongo reconstruites : ${r.documents} joueurs en ${r.duree_ms} ms`))
+    .catch((e) => app.log.warn(`Reconstruction des stats Mongo impossible : ${e.message}`));
+}
 
 await app.listen({ port: config.port, host: config.hote });
 app.log.info(`API prete sur http://localhost:${config.port}`);
@@ -119,7 +125,7 @@ app.log.info(`API prete sur http://localhost:${config.port}`);
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, async () => {
     await app.close();
-    await Promise.allSettled([fermerPostgres(), fermerAdmin(), fermerRedis(), fermerMongo(), fermerNeo4j()]);
+    await Promise.allSettled([fermerPostgres(), fermerAdmin(), fermerRedis(), fermerMongo()]);
     process.exit(0);
   });
 }
