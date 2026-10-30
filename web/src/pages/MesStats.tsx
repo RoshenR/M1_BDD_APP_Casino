@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { SousLeCapot } from '../components/SousLeCapot';
+import { jetons, signe } from '../lib/solde';
 
 interface Stats {
   _id: number;
@@ -167,6 +168,39 @@ function Blackjack({ s }: { s: NonNullable<Stats['blackjack']> }) {
   );
 }
 
+/* --- Bilan croise : PostgreSQL (argent) + MongoDB (comportement) ------------- */
+interface Bilan {
+  source_postgres: { nb_parties: number; total_mise: number; resultat_net: number };
+  coherence: { parties_postgres: number; parties_mongodb: number; synchronise: boolean };
+}
+
+function BilanCroise() {
+  const [bilan, setBilan] = useState<Bilan | null>(null);
+
+  useEffect(() => {
+    api.get<Bilan>('/moi/bilan').then(setBilan).catch(() => setBilan(null));
+  }, []);
+
+  if (!bilan) return null;
+  const { source_postgres: pg, coherence: c } = bilan;
+
+  return (
+    <section className="section" aria-labelledby="st-bilan">
+      <div className="compte__tete">
+        <h2 id="st-bilan">Bilan croisé</h2>
+        <span className="discret">GET /moi/bilan · deux bases, un même identifiant joueur</span>
+      </div>
+      <dl className="chiffres">
+        <div><dt>PostgreSQL · parties</dt><dd>{Number(pg.nb_parties).toLocaleString('fr-FR')}</dd></div>
+        <div><dt>PostgreSQL · total misé</dt><dd>{jetons(pg.total_mise)}</dd></div>
+        <div><dt>PostgreSQL · résultat net</dt><dd>{signe(Number(pg.resultat_net))}</dd></div>
+        <div><dt>MongoDB · parties</dt><dd>{c.parties_mongodb.toLocaleString('fr-FR')}</dd></div>
+        <div><dt>Cohérence</dt><dd>{c.synchronise ? '✓ synchronisé' : '⚠ écart'}</dd></div>
+      </dl>
+    </section>
+  );
+}
+
 export function MesStats() {
   const [stats, setStats] = useState<Stats | null | undefined>(undefined);
 
@@ -187,6 +221,7 @@ export function MesStats() {
 
   return (
     <>
+      <BilanCroise />
       {stats.roulette && <Roulette s={stats.roulette} />}
       {stats.blackjack && <Blackjack s={stats.blackjack} />}
       {stats.machine && <Machine s={stats.machine} />}
