@@ -91,7 +91,9 @@ DECLARE
     'parties_joueur(integer,integer)',
     'classement(integer)',
     'verifier_partie(bigint)',
-    'ca_jeu(text)'
+    'ca_jeu(text)',
+    'ajouter_ami(integer,text)',
+    'retirer_ami(integer,integer)'
   ];
 BEGIN
   -- Proprietaire non superutilisateur, pour toutes les routines du schema.

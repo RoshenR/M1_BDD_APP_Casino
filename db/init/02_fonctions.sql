@@ -1508,3 +1508,85 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION export_stats_joueurs() IS 'Construit un document jsonb par joueur pour la collection MongoDB stats_joueurs. Reserve a l''administration.';
+
+
+-- =============================================================================
+-- AMITIES — le CRUD complet d'une table, DELETE compris
+-- =============================================================================
+-- Les tables d'argent n'ont volontairement PAS de DELETE : le grand livre est
+-- append-only, un compte se ferme (statut = 'ferme') et ne s'efface pas.
+-- La table amities, elle, n'est pas une piece comptable : on y ajoute et on y
+-- SUPPRIME reellement des lignes.
+--
+--   C  ajouter_ami()   INSERT  (le trigger amities_symetrie pose le lien retour)
+--   R  GET /moi/amis   SELECT  filtre par la RLS amities_du_joueur
+--   U  (rien a modifier : une amitie existe ou non)
+--   D  retirer_ami()   DELETE  des deux sens du lien
+--
+-- casino_api n'a toujours aucun droit d'ecriture : il passe par ces deux
+-- fonctions SECURITY DEFINER, qui commencent par _exiger_identite().
+-- =============================================================================
+CREATE OR REPLACE FUNCTION ajouter_ami(p_joueur_id int, p_pseudo text)
+RETURNS TABLE (ami_id int, pseudo text, cree_le timestamptz)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_ami joueurs%ROWTYPE;
+BEGIN
+  PERFORM _exiger_identite(p_joueur_id);
+
+  SELECT * INTO v_ami
+  FROM joueurs j
+  WHERE lower(j.pseudo) = lower(trim(p_pseudo)) AND j.statut = 'actif';
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Joueur "%" introuvable', p_pseudo USING ERRCODE = 'no_data_found';
+  END IF;
+
+  IF v_ami.id = p_joueur_id THEN
+    RAISE EXCEPTION 'Vous ne pouvez pas vous ajouter vous-meme en ami';
+  END IF;
+
+  INSERT INTO amities (joueur_id, ami_id)
+  VALUES (p_joueur_id, v_ami.id)
+  ON CONFLICT DO NOTHING;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Vous etes deja ami avec %', v_ami.pseudo;
+  END IF;
+
+  RETURN QUERY
+  SELECT a.ami_id, v_ami.pseudo, a.cree_le
+  FROM amities a
+  WHERE a.joueur_id = p_joueur_id AND a.ami_id = v_ami.id;
+END;
+$$;
+
+COMMENT ON FUNCTION ajouter_ami(int, text) IS 'C du CRUD amities. Le lien reciproque est pose par le trigger amities_symetrie.';
+
+
+CREATE OR REPLACE FUNCTION retirer_ami(p_joueur_id int, p_ami_id int)
+RETURNS int
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_nb int;
+BEGIN
+  PERFORM _exiger_identite(p_joueur_id);
+
+  -- Une amitie est symetrique : on supprime les DEUX lignes, sinon le lien
+  -- survivrait a moitie.
+  DELETE FROM amities
+  WHERE (joueur_id = p_joueur_id AND ami_id = p_ami_id)
+     OR (joueur_id = p_ami_id    AND ami_id = p_joueur_id);
+  GET DIAGNOSTICS v_nb = ROW_COUNT;
+
+  IF v_nb = 0 THEN
+    RAISE EXCEPTION 'Aucune amitie avec le joueur %', p_ami_id USING ERRCODE = 'no_data_found';
+  END IF;
+
+  RETURN v_nb;
+END;
+$$;
+
+COMMENT ON FUNCTION retirer_ami(int, int) IS 'D du CRUD amities : un vrai DELETE, des deux sens du lien. Renvoie le nombre de lignes supprimees (2).';
