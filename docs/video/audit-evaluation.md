@@ -108,7 +108,7 @@ Légende : ✅ validé · 🟡 partiellement validé · ❌ non validé.
 | Vidéo absente, inaudible ou illisible | −3 | **élevé tant qu'elle n'est pas faite** | voir la [checklist](checklist-enregistrement.md) (taille de police, micro) |
 | Une seule famille de base | −4 | nul | PostgreSQL + MongoDB + Redis |
 | Secrets versionnés | −1 | faible | seuls des mots de passe **de développement** documentés sont versionnés (`api_secret`, `super_secret`, `dev-secret-a-changer-en-production`), avec `.env.example`. Le dire si la question est posée. Aucun `.env` versionné |
-| Dépôt sans historique de commits significatif | −1 | **réel** | `master` n'avait que 2 commits (`init`, puis le retrait de Neo4j). La branche `ahuV1` ajoute une vingtaine de commits thématiques, signés `Co-Authored-By: Claude`. **Fusionner `ahuV1` dans `master` par une pull request** pour qu'ils apparaissent |
+| Dépôt sans historique de commits significatif | −1 | **réel** | `master` n'avait que 2 commits (`init`, puis le retrait de Neo4j). La branche `ahuV1` ajoute une quinzaine de commits thématiques, signés `Co-Authored-By: Claude`. **Fusionner `ahuV1` dans `master` par une pull request** pour qu'ils apparaissent |
 
 ---
 
