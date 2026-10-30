@@ -1,0 +1,22 @@
+flowchart LR
+  U([Navigateur]) -->|HTTP :5173| W["web<br/>React 18 + Vite"]
+  W -->|JSON / JWT :3000| A["api<br/>Fastify + TypeScript<br/>SQL brut, zod"]
+  T([curl / scripts/test-api.mjs]) -->|JSON :3000| A
+
+  subgraph Donnees["docker compose : 7 services"]
+    direction TB
+    PG[("PostgreSQL 18<br/>schema casino<br/>SOURCE DE VERITE<br/>argent, comptes, regles")]
+    MG[("MongoDB 7<br/>stats_joueurs, replays<br/>donnees derivees")]
+    RD[("Redis 7<br/>sessions, rate-limit,<br/>classement ZSET")]
+    PA["pgAdmin 4"]
+  end
+
+  A -->|role casino_api<br/>EXECUTE uniquement| PG
+  A -->|role casino_superviseur<br/>routes /admin| PG
+  A -->|replays, $inc stats,<br/>pipelines| MG
+  A -->|SETEX, INCR, ZINCRBY| RD
+  PG -. "export_stats_joueurs()<br/>au demarrage" .-> A
+  PA --> PG
+
+  I1["db/init/*.sql<br/>schema + seed"] --> PG
+  I2["db/mongo-init/*.js<br/>collections, validateurs, index"] --> MG

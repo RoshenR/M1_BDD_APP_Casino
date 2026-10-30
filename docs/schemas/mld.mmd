@@ -1,0 +1,86 @@
+erDiagram
+  joueurs ||--o{ joueurs : "parrain_id (SET NULL)"
+  joueurs ||--o{ parties : "joueur_id (RESTRICT)"
+  jeux ||--o{ parties : "jeu_id"
+  joueurs ||--o{ transactions : "joueur_id (RESTRICT)"
+  parties |o--o{ transactions : "partie_id (RESTRICT)"
+  joueurs ||--o{ amities : "joueur_id (CASCADE)"
+  joueurs ||--o{ amities : "ami_id (CASCADE)"
+  joueurs ||--o{ transferts : "expediteur_id"
+  joueurs ||--o{ transferts : "destinataire_id"
+
+  joueurs {
+    int id PK "IDENTITY"
+    text pseudo UK "CHECK regex 3-24"
+    text email UK "CHECK format"
+    text mot_de_passe_hash "bcrypt (pgcrypto)"
+    date date_naissance "majeur (trigger)"
+    int parrain_id FK
+    text role "CHECK joueur|admin"
+    text statut "CHECK actif|suspendu|ferme"
+    numeric solde "CHECK >= 0, cache"
+    timestamptz exclu_jusqu_au
+    numeric limite_mise "CHECK > 0"
+    timestamptz cree_le
+    timestamptz maj_le
+  }
+  jeux {
+    int id PK
+    text code UK "CHECK blackjack|roulette|machine"
+    text nom
+    numeric mise_min "CHECK min>0, max>=min"
+    numeric mise_max
+    numeric rtp_theorique "CHECK 0.5-1.0"
+    boolean actif
+  }
+  parties {
+    bigint id PK
+    int joueur_id FK
+    int jeu_id FK
+    numeric mise "CHECK > 0"
+    numeric gain "CHECK >= 0"
+    numeric resultat_net "GENERATED gain - mise"
+    text statut "CHECK + fin coherente"
+    text resultat
+    jsonb etat
+    text server_seed
+    text server_seed_hash
+    text client_seed
+    int nonce
+    timestamptz cree_le
+    timestamptz terminee_le
+  }
+  transactions {
+    bigint id PK
+    int joueur_id FK
+    bigint partie_id FK "nullable"
+    text type "CHECK 8 types"
+    numeric montant "CHECK signe selon type"
+    numeric solde_apres "CHECK >= 0"
+    text libelle
+    timestamptz cree_le
+  }
+  amities {
+    int joueur_id PK,FK
+    int ami_id PK,FK "CHECK <> joueur_id"
+    timestamptz cree_le
+  }
+  transferts {
+    bigint id PK
+    int expediteur_id FK
+    int destinataire_id FK "CHECK <> expediteur"
+    numeric montant "CHECK > 0"
+    text message
+    timestamptz cree_le
+  }
+  journal_audit {
+    bigint id PK
+    text table_cible
+    text operation "CHECK INSERT|UPDATE|DELETE"
+    text cle
+    jsonb avant
+    jsonb apres
+    text role_bdd
+    text joueur_app
+    timestamptz cree_le
+  }

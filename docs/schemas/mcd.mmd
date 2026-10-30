@@ -1,0 +1,34 @@
+flowchart LR
+  classDef ent fill:#eef3ff,stroke:#3b5bdb,stroke-width:1.5px,color:#111;
+  classDef asso fill:#fff4e6,stroke:#e8590c,color:#111;
+
+  JOUEUR["<b>JOUEUR</b><hr/><u>id</u><br/>pseudo, email<br/>mot_de_passe_hash<br/>date_naissance, role, statut<br/>solde, exclu_jusqu_au<br/>limite_mise, cree_le"]:::ent
+  JEU["<b>JEU</b><hr/><u>id</u><br/>code, nom<br/>mise_min, mise_max<br/>rtp_theorique, actif"]:::ent
+  PARTIE["<b>PARTIE</b><hr/><u>id</u><br/>mise, gain, statut, resultat<br/>etat, server_seed(_hash)<br/>client_seed, nonce<br/>cree_le, terminee_le"]:::ent
+  TRANSACTION["<b>TRANSACTION</b><hr/><u>id</u><br/>type, montant<br/>solde_apres, libelle, cree_le"]:::ent
+  TRANSFERT["<b>TRANSFERT</b><hr/><u>id</u><br/>montant, message, cree_le"]:::ent
+
+  JOUER(("JOUER")):::asso
+  PORTER(("PORTER SUR")):::asso
+  MOUVEMENTER(("MOUVEMENTER")):::asso
+  REGLER(("REGLER")):::asso
+  PARRAINER(("PARRAINER")):::asso
+  AMI(("ETRE AMI<br/>cree_le")):::asso
+  ENVOYER(("ENVOYER")):::asso
+  RECEVOIR(("RECEVOIR")):::asso
+
+  JOUEUR ---|"0,n"| JOUER ---|"1,1"| PARTIE
+  PARTIE ---|"1,1"| PORTER ---|"0,n"| JEU
+  JOUEUR ---|"0,n"| MOUVEMENTER ---|"1,1"| TRANSACTION
+  TRANSACTION ---|"0,1"| REGLER ---|"0,n"| PARTIE
+  JOUEUR ---|"0,n parrain"| PARRAINER
+  PARRAINER ---|"0,1 filleul"| JOUEUR
+  JOUEUR ---|"0,n"| AMI
+  AMI ---|"0,n"| JOUEUR
+  JOUEUR ---|"0,n"| ENVOYER ---|"1,1"| TRANSFERT
+  JOUEUR ---|"0,n"| RECEVOIR ---|"1,1"| TRANSFERT
+
+  subgraph ISOLEE["Entite sans association (alimentee par triggers)"]
+    AUDIT["<b>JOURNAL_AUDIT</b><hr/><u>id</u><br/>table_cible, operation, cle<br/>avant, apres, role_bdd<br/>joueur_app, cree_le"]:::ent
+  end
+  JEU ~~~ ISOLEE

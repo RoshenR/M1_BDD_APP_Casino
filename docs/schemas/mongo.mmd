@@ -1,0 +1,10 @@
+flowchart LR
+  classDef pg fill:#eef3ff,stroke:#3b5bdb,color:#111;
+  classDef mg fill:#ebfbee,stroke:#2b8a3e,color:#111;
+  J["PostgreSQL<br/><b>joueurs</b>.id"]:::pg
+  P["PostgreSQL<br/><b>parties</b>.id"]:::pg
+  S["MongoDB <b>stats_joueurs</b><br/>_id = joueurs.id<br/>pseudo<br/>roulette { parties, mise, gain,<br/>  numeros{}, couleurs{}, paris{} }<br/>machine { parties, combinaisons{},<br/>  meilleur_multiplicateur }<br/>blackjack { parties, resultats{},<br/>  depasses_21, doubles }"]:::mg
+  R["MongoDB <b>replays</b><br/>partieId = parties.id (unique)<br/>joueurId = joueurs.id<br/>jeu, mise, gain<br/>coups [ ... forme libre ... ]<br/>annotation { note, favori, maj_le }<br/>cree_le (TTL 1 an)"]:::mg
+  J -- "1 document par joueur<br/>(reconstructible)" --> S
+  P -- "1 document par partie jouee<br/>dans l'application" --> R
+  J -. joueurId .-> R
