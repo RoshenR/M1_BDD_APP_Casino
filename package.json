@@ -18,6 +18,7 @@
     "demo:5": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/05-securite.sql",
     "demo:6": "docker compose exec -T mongo sh /db/demo/mongosh.sh /db/demo/06-mongodb.js",
     "demo:mongo": "docker compose exec -T mongo sh /db/demo/mongosh.sh /db/demo/06-mongodb.js",
+    "demo:mongo:log": "docker compose exec -T mongo sh /db/demo/mongosh.sh /db/demo/06-mongodb.js > scripts/demo-mongo.log",
     "index": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/03-index.sql",
     "migrer": "docker compose exec postgres psql -U postgres -d casino -f /db/migrations/2026-10-28_transferts_et_stats_mongo.sql",
     "typecheck": "cd api && npx tsc --noEmit && cd ../web && npx tsc -b --noEmit",

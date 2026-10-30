@@ -16,4 +16,4 @@ fi
 exec mongosh --quiet \
   -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" \
   --authenticationDatabase admin casino \
-  --eval "load('$1')" < /dev/null
+  --eval "load('$1'); void 0" < /dev/null
