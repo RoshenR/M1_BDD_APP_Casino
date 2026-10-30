@@ -7,7 +7,29 @@ joueur et traduire les erreurs PostgreSQL en codes HTTP.
 
 > *« Tout ce que la base garantit, l'application n'a plus à le vérifier — ni à l'oublier. »*
 
+| Document | Contenu |
+|---|---|
+| [`docs/presentation.md`](docs/presentation.md) | Présentation complète : architecture, **MCD / MLD / MPD**, modèle MongoDB commenté, justification des choix, requêtes significatives, index, **sauvegarde**, limites |
+| [`docs/video/`](docs/video/) | **Vidéo de présentation** (voir [Vidéo](#vidéo)) et son script |
+| [`docs/schemas/`](docs/schemas/) | Schémas (PNG) et leurs sources Mermaid |
+
+**Pile technique** : PostgreSQL 18 (base relationnelle, source de vérité) · MongoDB 7 (base
+document) · Redis 7 (base clé-valeur) · API Node 24 / Fastify 5 / TypeScript · front
+React 18 / Vite · Docker Compose.
+
 ---
+
+## Prérequis
+
+- **Docker** avec Compose v2 (Docker Desktop sous Windows / macOS), démon démarré.
+- Environ **3 Go** d'espace disque libre (images + 1,2 M de lignes).
+- Ports libres : `5173` (front), `3000` (API), `5432` (PostgreSQL), `8080` (pgAdmin),
+  `27017` (MongoDB), `6379` (Redis).
+- *Facultatif* : **Node 18+** sur la machine hôte, uniquement pour les raccourcis
+  `npm run …` (tests, démos, sauvegarde). La pile elle-même n'en a pas besoin.
+
+Aucun fichier `.env` n'est nécessaire : chaque variable a une valeur par défaut de
+développement. [`.env.example`](.env.example) liste celles à surcharger.
 
 ## Démarrage
 
@@ -38,6 +60,24 @@ Pour repartir de zéro :
 ```bash
 docker compose down -v && docker compose up -d --wait
 ```
+
+Vérifier que tout fonctionne (37 tests de bout en bout, sur les trois bases) :
+
+```bash
+npm run test:api
+```
+
+### Raccourcis (`package.json`)
+
+| Commande | Effet |
+|---|---|
+| `npm run up` / `down` / `reset` | démarrer / arrêter / tout recréer depuis zéro |
+| `npm run psql` · `psql:api` · `mongo` · `redis` | ouvrir un client (superutilisateur, rôle applicatif, mongosh, redis-cli) |
+| `npm run demo:1` … `demo:5` | démonstrations SQL (requêtes, vues, index, fonctions, sécurité) |
+| `npm run demo:mongo` | démonstration MongoDB ([`db/demo/06-mongodb.js`](db/demo/06-mongodb.js)) |
+| `npm run test:api` | tests de l'API ([`scripts/test-api.mjs`](scripts/test-api.mjs)) |
+| `npm run typecheck:docker` | contrôle de type TypeScript dans le conteneur |
+| `npm run sauvegarde` / `restaurer -- backups/<date>` | sauvegarde et restauration ([§ Sauvegarde](#sauvegarde)) |
 
 ---
 
@@ -78,8 +118,8 @@ C'est la question 4 du TP 03.
 | **01** Requêtes complexes | [`db/init/04_vues.sql`](db/init/04_vues.sql), [`db/demo/01-requetes-complexes.sql`](db/demo/01-requetes-complexes.sql) | `LEFT JOIN` avec filtre dans le `ON`, `NOT EXISTS` et le piège de `NOT IN`, CTE chaînées, `WITH RECURSIVE` sur l'arbre de parrainage, `WITH RECURSIVE … CYCLE` pour la détection de collusion, `FILTER`, `GROUPING SETS`, fenêtrage |
 | **02** Vues & matérialisées | [`db/init/04_vues.sql`](db/init/04_vues.sql), [`db/demo/02-vues.sql`](db/demo/02-vues.sql) | 8 vues, chaîne de dépendances, `WITH CHECK OPTION`, `mv_stats_quotidiennes` + index unique + `REFRESH CONCURRENTLY`, `security_invoker` |
 | **03** Index & plans | [`db/demo/03-index.sql`](db/demo/03-index.sql) | `EXPLAIN (ANALYZE, BUFFERS)` avant/après, index composite, index partiel, index sur expression, ce qu'un B-tree ne sait pas faire, coût en écriture, `pg_stat_user_indexes` |
-| **04** Fonctions & triggers | [`db/init/02_fonctions.sql`](db/init/02_fonctions.sql), [`db/init/03_triggers.sql`](db/init/03_triggers.sql) | 30+ fonctions PL/pgSQL, 8 triggers, exceptions métier, `RETURNS TABLE`, procédures, `to_jsonb` pour l'audit |
-| **05** Rôles, droits & RLS | [`db/init/05_securite.sql`](db/init/05_securite.sql), [`db/demo/05-securite.sql`](db/demo/05-securite.sql) | 8 rôles, `GRANT` colonne par colonne, 18 fonctions `SECURITY DEFINER`, RLS sur 6 tables, la fuite par les vues |
+| **04** Fonctions & triggers | [`db/init/02_fonctions.sql`](db/init/02_fonctions.sql), [`db/init/03_triggers.sql`](db/init/03_triggers.sql) | 45 fonctions et 6 procédures PL/pgSQL, 10 déclencheurs, exceptions métier, `RETURNS TABLE`, procédures, `to_jsonb` pour l'audit |
+| **05** Rôles, droits & RLS | [`db/init/05_securite.sql`](db/init/05_securite.sql), [`db/demo/05-securite.sql`](db/demo/05-securite.sql) | 8 rôles, `GRANT` colonne par colonne, 20 fonctions `SECURITY DEFINER`, RLS sur 6 tables, la fuite par les vues |
 
 ### Jouer les démonstrations
 
@@ -109,7 +149,7 @@ docker compose exec postgres psql -U postgres -d casino -f /db/demo/05-securite.
 ## Le point fort : l'API ne peut pas écrire
 
 Le rôle `casino_api` n'a **aucun** droit d'écriture sur les tables d'argent.
-Il ne peut qu'appeler 18 fonctions `SECURITY DEFINER` qui contrôlent tout.
+Il ne peut qu'appeler 20 fonctions `SECURITY DEFINER` qui contrôlent tout.
 
 ```bash
 docker compose exec postgres psql -U casino_api -d casino
@@ -146,7 +186,7 @@ fonctions métier, qui appliquent les mêmes règles à tout le monde.
 |---|---|---|
 | `casino_proprietaire` | NOLOGIN | Propriétaire des objets. **Pas** superutilisateur : une faille dans une fonction `SECURITY DEFINER` reste confinée au schéma `casino`. |
 | `casino_lecture` | groupe | Catalogue des jeux, fonctions de calcul publiques |
-| `casino_joueur` | groupe | `SELECT` sur 7 colonnes de `joueurs` (ni email, ni hash), `EXECUTE` sur les 18 fonctions métier |
+| `casino_joueur` | groupe | `SELECT` sur 7 colonnes de `joueurs` (ni email, ni hash), `EXECUTE` sur les 20 fonctions métier |
 | `casino_bi` | groupe | Vues matérialisées et agrégats. **Aucune** donnée personnelle. |
 | `casino_admin` | groupe | Exploitation |
 | `casino_api` | **LOGIN** | L'application web (`casino_joueur` + `casino_lecture`) |
@@ -208,25 +248,39 @@ Le script 05 le démontre en la cassant puis en la réparant :
 ```
 casino/
 ├── docker-compose.yml          7 services
+├── package.json                raccourcis npm (démos, tests, sauvegarde)
+├── .env.example                variables surchargeables (aucun secret réel versionné)
 ├── db/
-│   ├── init/                   joués UNE FOIS au premier démarrage, dans l'ordre
-│   │   ├── 01_schema.sql       7 tables, contraintes d'abord
-│   │   ├── 02_fonctions.sql    30+ fonctions et procédures PL/pgSQL
-│   │   ├── 03_triggers.sql     8 déclencheurs
+│   ├── init/                   SQL : joués UNE FOIS au premier démarrage, dans l'ordre
+│   │   ├── 01_schema.sql       7 tables, contraintes d'abord (MPD commenté)
+│   │   ├── 02_fonctions.sql    45 fonctions et 6 procédures PL/pgSQL
+│   │   ├── 03_triggers.sql     10 déclencheurs
 │   │   ├── 04_vues.sql         8 vues + 1 vue matérialisée
 │   │   ├── 05_securite.sql     rôles, GRANT, SECURITY DEFINER, RLS
-│   │   └── 06_seed.sql         remplissage en SQL pur (generate_series)
-│   ├── demo/                   les 5 scripts de soutenance
+│   │   └── 06_seed.sql         peuplement en SQL pur (generate_series)
+│   ├── mongo-init/             MongoDB : collections, validateurs, index (TTL, partiel)
+│   ├── demo/                   scripts de démonstration : 01 à 05 (SQL), 06 (MongoDB)
 │   ├── migrations/             mise à niveau d'une base déjà initialisée
-│   ├── mongo-init/             collections replays et stats_joueurs, validateurs
 │   └── pgadmin-servers.json    3 connexions préconfigurées
 ├── api/                        Fastify + TypeScript, SQL brut, aucun ORM
 │   └── src/
 │       ├── infra/              postgres, redis, mongo
 │       ├── routes/             auth · profil · jeux · stats · admin
 │       └── erreurs.ts          codes PostgreSQL → codes HTTP
-└── web/                        React + Vite, volontairement simple
+├── web/                        React + Vite (bonus : front connecté à l'API)
+├── scripts/                    test-api.mjs, sauvegarde.mjs, restaurer.mjs
+└── docs/                       presentation.md, schemas/, video/
 ```
+
+Correspondance avec l'arborescence suggérée par les consignes :
+
+| Consignes | Ici |
+|---|---|
+| `/docker/docker-compose.yml` | `docker-compose.yml` (racine : `docker compose up` sans option) |
+| `/docker/init-sql` | `db/init/` (création **et** peuplement SQL) |
+| `/docker/init-nosql` | `db/mongo-init/` (création) + peuplement automatique par l'API au démarrage, depuis `export_stats_joueurs()` |
+| `/api`, `/front` | `api/`, `web/` |
+| `/docs`, `/docs/video` | `docs/`, `docs/video/` |
 
 ### Pourquoi aucun ORM
 
@@ -396,7 +450,23 @@ l'application sont complètes.
 
 **Collection `replays`** — le détail de chaque partie (coups du blackjack, rouleaux
 de la machine), écrit en masse, lu un par un, **jamais joint**, et purgé par TTL au
-bout d'un an.
+bout d'un an. Le joueur peut l'annoter (sous-document `annotation` : note, favori) et
+le supprimer : `PATCH` / `DELETE /moi/replays/:partieId`. Un index **partiel** ne
+contient que les favoris.
+
+**Requêtes avancées** ([`api/src/infra/mongo.ts`](api/src/infra/mongo.ts),
+[`db/demo/06-mongodb.js`](db/demo/06-mongodb.js)) :
+
+- `GET /statistiques/tirages` : pipeline `$facet` / `$objectToArray` / `$unwind` /
+  `$group` sur les 10 000 documents. La roulette est-elle équitable ? Sur 266 845
+  tirages, le numéro le plus sorti l'est à 2,789 % et le moins sorti à 2,614 %, pour
+  2,703 % attendus.
+- `GET /admin/mongo/gros-gagnants?multiplicateur=1000` : filtre et tri sur le champ
+  imbriqué `machine.meilleur_multiplicateur`, couvert par un index (`IXSCAN` sur 109
+  documents au lieu d'un `COLLSCAN` sur 10 004).
+- `GET /moi/bilan` : **lecture croisée** — l'argent vient de PostgreSQL
+  (`v_stats_joueur`), le comportement de MongoDB (`stats_joueurs`), reliés par le même
+  identifiant, avec un contrôle de cohérence du nombre de parties.
 
 Une panne Mongo fait perdre des stats et des replays, pas un jeton :
 [`api/src/infra/mongo.ts`](api/src/infra/mongo.ts) attrape l'erreur et continue.
@@ -455,13 +525,18 @@ trier le suspect du courant. Démonstration : question 9 de
 | `GET` | `/moi/transactions` | grand livre — **sans `WHERE joueur_id`**, c'est la RLS qui filtre |
 | `POST` | `/moi/exclusion` · `/moi/limite` | jeu responsable |
 | `GET` | `/moi/parrainage` | descendance par `WITH RECURSIVE` |
+| `GET` · `POST` | `/moi/amis` | liste (jointure) · ajout (`ajouter_ami()`) |
+| `DELETE` | `/moi/amis/:amiId` | suppression réelle, des deux sens du lien (`retirer_ami()`) |
 | `GET` | `/moi/stats-jeux` | statistiques de jeu (MongoDB) |
-| `GET` | `/moi/replays` | détail des parties (MongoDB) |
+| `GET` | `/moi/bilan` | **lecture croisée** : argent (PostgreSQL) + comportement (MongoDB) |
+| `GET` | `/moi/replays[?favoris=true]` | détail des parties (MongoDB) |
+| `PATCH` · `DELETE` | `/moi/replays/:partieId` | annoter (note, favori) · supprimer un replay (MongoDB) |
 | `POST` | `/jeux/roulette` · `/jeux/machine` · `/jeux/blackjack` | |
 | `POST` | `/jeux/blackjack/action` | tirer · rester · doubler |
-| `GET` | `/parties/:id/verification` | provably fair |
+| `GET` | `/parties/:id/verification` | provably fair : preuve PostgreSQL + replay MongoDB ; 404 si absente |
 | `GET` | `/classement` · `/classement/live` | PostgreSQL · Redis |
 | `GET` | `/statistiques/jeux` | vue ordinaire, toujours à jour |
+| `GET` | `/statistiques/tirages` | pipeline d'agrégation MongoDB (équité des tirages) |
 | `GET` | `/admin/integrite` | contrôle du grand livre |
 | `GET` | `/admin/statistiques/jours` | vue matérialisée (figée) — à comparer avec `/statistiques/jeux` |
 | `POST` | `/admin/statistiques/rafraichir` | `REFRESH CONCURRENTLY` |
@@ -469,6 +544,13 @@ trier le suspect du courant. Démonstration : question 9 de
 | `GET` | `/admin/index` · `/admin/requetes-lentes` | module 03 en production |
 | `GET` | `/admin/collusion` | anneaux de transferts, `WITH RECURSIVE … CYCLE` |
 | `POST` | `/admin/mongo/reconstruire` | régénère `stats_joueurs` depuis PostgreSQL |
+| `GET` | `/admin/mongo/gros-gagnants` | filtre sur champ imbriqué indexé (MongoDB) |
+
+**Gestion des erreurs** : corps invalide → `400` avec le détail des champs (zod) ;
+règle métier PL/pgSQL (`RAISE EXCEPTION`) → `400` avec le message de la base ; jeton
+absent → `401` ; rôle insuffisant → `403` ; ressource absente → `404` ; doublon →
+`409` ; MongoDB indisponible → `503` sur les routes qui en dépendent. Tous ces cas sont
+couverts par `npm run test:api`.
 
 Exemple complet :
 
@@ -508,6 +590,19 @@ VALUES (4, 'mise', -10, 1000);
 
 ---
 
+## Sauvegarde
+
+```bash
+npm run sauvegarde                              # -> backups/AAAAMMJJ_HHMM/
+npm run restaurer -- backups/AAAAMMJJ_HHMM      # après docker compose stop api
+```
+
+`pg_dumpall --roles-only` + `pg_dump -Fc` pour PostgreSQL, `mongodump --archive --gzip`
+pour MongoDB. Redis n'est pas sauvegardé : il ne contient que du jetable. Stratégie
+complète (fréquence, rétention, PITR) : [`docs/presentation.md` § 8](docs/presentation.md#8-stratégie-de-sauvegarde).
+
+---
+
 ## Notes de développement
 
 **Ne jamais rejouer `02_fonctions.sql` seul.** Un `CREATE OR REPLACE FUNCTION` sans
@@ -527,7 +622,7 @@ docker compose exec postgres psql -U postgres -d casino -f /db/migrations/2026-1
 Vérifications utiles :
 
 ```sql
--- Les 17 fonctions SECURITY DEFINER et leur search_path
+-- Les 20 fonctions SECURITY DEFINER et leur search_path
 SELECT proname, prosecdef, proconfig FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'casino' AND p.prosecdef;
@@ -570,8 +665,38 @@ cd api && npx tsc --noEmit
 | Mouvements | ~1,2 M |
 | Tables | 7 |
 | Vues | 8 + 1 matérialisée |
-| Fonctions et procédures | 30+ |
-| Déclencheurs | 8 |
+| Fonctions et procédures | 45 + 6 |
+| Déclencheurs | 10 |
 | Rôles PostgreSQL | 8 |
 | Politiques RLS | 10 sur 6 tables |
 | Collections MongoDB | 2 (`stats_joueurs`, `replays`) |
+
+---
+
+## Vidéo
+
+La vidéo de présentation (8 à 12 minutes) est déposée dans [`docs/video/`](docs/video/).
+Si le fichier dépasse 100 Mo, le lien vers la version hébergée est indiqué ici.
+
+<!-- Remplacer par le lien réel une fois la vidéo enregistrée. -->
+**Lien : _à compléter après l'enregistrement_**
+
+Le scénario, le script oral et les commandes utilisées sont dans
+[`docs/video/`](docs/video/).
+
+---
+
+## Outils d'IA utilisés
+
+Conformément aux consignes, nous déclarons l'usage d'outils d'IA :
+
+- **Claude (Anthropic), via Claude Code** — assistance au développement (le dossier
+  `.claude/` en garde la trace).
+- **Claude (Anthropic)** — finalisation sur la branche `ahuV1` : audit du projet par
+  rapport à la grille d'évaluation, CRUD des amitiés (`ajouter_ami`, `retirer_ami`),
+  CRUD des replays et pipelines d'agrégation MongoDB, lecture croisée `/moi/bilan`,
+  script de démonstration MongoDB, tests de l'API, scripts de sauvegarde,
+  `docs/presentation.md` et préparation de la vidéo. Ces commits portent la mention
+  `Co-Authored-By: Claude`.
+
+L'équipe reste responsable de chaque ligne livrée et doit pouvoir l'expliquer et la défendre.
