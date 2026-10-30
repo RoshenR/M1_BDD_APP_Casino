@@ -16,6 +16,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requete } from '../infra/postgres.js';
 import { lireClassement } from '../infra/redis.js';
+import { analyserTirages } from '../infra/mongo.js';
 
 export async function routesStats(app: FastifyInstance): Promise<void> {
   /**
@@ -51,6 +52,14 @@ export async function routesStats(app: FastifyInstance): Promise<void> {
        ORDER BY marge_casino DESC`,
     );
   });
+
+  /**
+   * Le tirage est-il equitable ? Pipeline d'agregation MongoDB ($facet,
+   * $objectToArray, $unwind, $group) sur les 10 000 documents stats_joueurs :
+   * frequence de chaque numero et couleur de la roulette, et de chaque
+   * combinaison de la machine, sur l'ensemble du casino.
+   */
+  app.get('/statistiques/tirages', async () => analyserTirages());
 
   // Le tableau de bord quotidien s'appuie sur mv_stats_quotidiennes, qui n'est
   // accordee qu'a casino_bi et casino_admin : une vue materialisee ne connait

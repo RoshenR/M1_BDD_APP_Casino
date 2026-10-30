@@ -22,7 +22,7 @@ import { z } from 'zod';
 import { avecJoueur, requete } from '../infra/postgres.js';
 import { enregistrerReplay, lireReplay, majStats } from '../infra/mongo.js';
 import { majClassement } from '../infra/redis.js';
-import { traduireErreurPg } from '../erreurs.js';
+import { ErreurHttp, traduireErreurPg } from '../erreurs.js';
 
 const schemaMise = z.object({
   mise: z.number().positive().max(100_000),
@@ -147,11 +147,14 @@ export async function routesJeux(app: FastifyInstance): Promise<void> {
 
   // --- Provably fair : verifier une partie -----------------------------------
   app.get<{ Params: { id: string } }>('/parties/:id/verification', { onRequest: [app.authentifier] }, async (req) => {
-    const id = Number(req.params.id);
+    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
+    // Lecture CROISEE : la preuve cryptographique vient de PostgreSQL (source
+    // de verite), le deroule de la partie vient de MongoDB (journal).
     const [v] = await requeteContexte(req.joueur.id,
       'SELECT * FROM casino.verifier_partie($1)', [id]);
+    if (!v) throw new ErreurHttp(404, `Partie ${id} introuvable ou pas encore terminee`);
     const replay = await lireReplay(id);
-    return { ...(v ?? {}), replay: replay?.coups ?? null };
+    return { ...v, replay: replay?.coups ?? null };
   });
 }
 

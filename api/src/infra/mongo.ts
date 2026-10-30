@@ -29,6 +29,8 @@ export interface Replay {
   gain: number;
   coups: unknown[];
   cree_le: Date;
+  /** Ajoutee par le joueur (PATCH /moi/replays/:id) : sous-document embarque. */
+  annotation?: { note?: string; favori?: boolean; maj_le: Date };
 }
 
 /**
@@ -78,6 +80,16 @@ export async function connecterMongo(): Promise<void> {
   const existe = await db.listCollections({ name: 'stats_joueurs' }).hasNext();
   if (!existe) await db.createCollection('stats_joueurs');
   stats = db.collection<StatsJoueur>('stats_joueurs');
+
+  // Index sur un champ IMBRIQUE : sert la recherche des gros gagnants
+  // (GET /admin/mongo/gros-gagnants), qui filtre et trie sur ce champ.
+  await stats.createIndex({ 'machine.meilleur_multiplicateur': -1 }, { name: 'stats_meilleur_multiplicateur' });
+  // Index PARTIEL : il ne contient que les replays mis en favori. Petit, et
+  // utilise uniquement par la requete qui filtre sur annotation.favori = true.
+  await replays.createIndex(
+    { joueurId: 1, cree_le: -1 },
+    { name: 'replays_favoris', partialFilterExpression: { 'annotation.favori': true } },
+  );
 }
 
 /* ---------------------------------------------------------------------------
@@ -186,9 +198,160 @@ export async function enregistrerReplay(r: Omit<Replay, 'cree_le'>): Promise<voi
   }
 }
 
-export async function lireReplays(joueurId: number, limite = 20): Promise<Replay[]> {
-  if (!replays) return [];
-  return replays.find({ joueurId }).sort({ cree_le: -1 }).limit(limite).toArray();
+export async function lireReplays(joueurId: number, limite = 20, favorisSeulement = false): Promise<Replay[]> {
+  if (!replays) return [];   // comportement historique : liste vide si Mongo est absent
+  // Filtre sur un champ imbrique du sous-document annotation.
+  const filtre = favorisSeulement ? { joueurId, 'annotation.favori': true } : { joueurId };
+  return replays.find(filtre).sort({ cree_le: -1 }).limit(limite).toArray();
+}
+
+/**
+ * U du CRUD : le joueur annote un de SES replays (note libre, favori).
+ * Le filtre porte sur partieId ET joueurId : impossible d'annoter le replay
+ * d'un autre joueur, meme en devinant son numero de partie.
+ * Renvoie null si aucun replay ne correspond (-> 404).
+ */
+export async function annoterReplay(
+  joueurId: number,
+  partieId: number,
+  annotation: { note?: string; favori?: boolean },
+): Promise<Replay | null> {
+  if (!replays) throw new ErreurMongoIndisponible();
+  const set: Record<string, unknown> = { 'annotation.maj_le': new Date() };
+  if (annotation.note !== undefined) set['annotation.note'] = annotation.note;
+  if (annotation.favori !== undefined) set['annotation.favori'] = annotation.favori;
+  return replays.findOneAndUpdate(
+    { partieId, joueurId },
+    { $set: set },
+    { returnDocument: 'after' },
+  );
+}
+
+/**
+ * D du CRUD : le joueur supprime un replay. Aucun risque comptable : la
+ * partie, la mise et le gain restent dans PostgreSQL (le replay n'est qu'un
+ * journal). Renvoie le nombre de documents supprimes (0 -> 404).
+ */
+export async function supprimerReplay(joueurId: number, partieId: number): Promise<number> {
+  if (!replays) throw new ErreurMongoIndisponible();
+  const r = await replays.deleteOne({ partieId, joueurId });
+  return r.deletedCount;
+}
+
+/* ---------------------------------------------------------------------------
+   Requetes avancees
+   ------------------------------------------------------------------------ */
+
+/**
+ * PIPELINE D'AGREGATION — le tirage est-il equitable ?
+ *
+ * Chaque document porte un dictionnaire { "17": 3, "0": 1, ... } par joueur.
+ * $objectToArray le transforme en tableau de paires {k, v}, $unwind en fait
+ * une ligne par numero et par joueur, $group les additionne sur tout le
+ * casino. $facet calcule trois resultats en UN seul passage sur la collection.
+ *
+ * Attendu pour une roulette equitable : chaque numero sort 1 fois sur 37
+ * (2,703 %), rouge et noir 18 fois sur 37 (48,65 %), le zero 1 fois sur 37.
+ */
+export async function analyserTirages(): Promise<Record<string, unknown>> {
+  if (!stats) throw new ErreurMongoIndisponible();
+  const pourcentage = (champ: string, total: string) => ({
+    $round: [{ $multiply: [{ $divide: [champ, total] }, 100] }, 3],
+  });
+
+  const [r] = await stats.aggregate([
+    { $facet: {
+      // 1. Frequence de chaque numero de la roulette, comparee a 1/37
+      roulette_numeros: [
+        { $match: { 'roulette.numeros': { $exists: true } } },
+        { $project: { _id: 0, n: { $objectToArray: '$roulette.numeros' } } },
+        { $unwind: '$n' },
+        { $group: { _id: { $toInt: '$n.k' }, sorties: { $sum: '$n.v' } } },
+        { $group: { _id: null, total: { $sum: '$sorties' }, numeros: { $push: { numero: '$_id', sorties: '$sorties' } } } },
+        { $unwind: '$numeros' },
+        { $project: {
+          _id: 0,
+          numero: '$numeros.numero',
+          sorties: '$numeros.sorties',
+          frequence_pct: pourcentage('$numeros.sorties', '$total'),
+          ecart_pt: { $round: [{ $subtract: [
+            { $multiply: [{ $divide: ['$numeros.sorties', '$total'] }, 100] },
+            100 / 37,
+          ] }, 3] },
+        } },
+        { $sort: { sorties: -1 } },
+      ],
+      // 2. Couleurs : rouge / noir / vert
+      roulette_couleurs: [
+        { $match: { 'roulette.couleurs': { $exists: true } } },
+        { $project: { _id: 0, c: { $objectToArray: '$roulette.couleurs' } } },
+        { $unwind: '$c' },
+        { $group: { _id: '$c.k', sorties: { $sum: '$c.v' } } },
+        { $group: { _id: null, total: { $sum: '$sorties' }, couleurs: { $push: { couleur: '$_id', sorties: '$sorties' } } } },
+        { $unwind: '$couleurs' },
+        { $project: { _id: 0, couleur: '$couleurs.couleur', sorties: '$couleurs.sorties',
+                      frequence_pct: pourcentage('$couleurs.sorties', '$total') } },
+        { $sort: { sorties: -1 } },
+      ],
+      // 3. Machine a sous : combien de fois chaque combinaison est sortie,
+      //    et chez combien de joueurs differents.
+      machine_combinaisons: [
+        { $match: { 'machine.combinaisons': { $exists: true } } },
+        { $project: { _id: 0, c: { $objectToArray: '$machine.combinaisons' } } },
+        { $unwind: '$c' },
+        { $group: { _id: '$c.k', sorties: { $sum: '$c.v' }, joueurs: { $sum: 1 } } },
+        { $project: { _id: 0, combinaison: '$_id', sorties: 1, joueurs: 1 } },
+        { $sort: { sorties: -1 } },
+      ],
+      // 4. Volume analyse
+      totaux: [
+        { $group: {
+          _id: null,
+          documents: { $sum: 1 },
+          spins_roulette: { $sum: { $ifNull: ['$roulette.parties', 0] } },
+          tours_machine: { $sum: { $ifNull: ['$machine.parties', 0] } },
+          mains_blackjack: { $sum: { $ifNull: ['$blackjack.parties', 0] } },
+        } },
+        { $project: { _id: 0 } },
+      ],
+    } },
+  ]).toArray();
+
+  return { ...r, totaux: (r?.totaux as unknown[] | undefined)?.[0] ?? null };
+}
+
+/**
+ * REQUETE AVEC OPERATEURS SUR CHAMPS IMBRIQUES — les gros gagnants.
+ *
+ * Surveillance anti-fraude : quels joueurs ont deja touche un multiplicateur
+ * d'au moins N a la machine ? Filtre ($gte) et tri sur
+ * machine.meilleur_multiplicateur, servis par l'index du meme nom ;
+ * projection pour ne renvoyer que les champs utiles.
+ */
+export async function grosGagnants(multiplicateurMin: number, limite: number): Promise<unknown[]> {
+  if (!stats) throw new ErreurMongoIndisponible();
+  return stats
+    .find(
+      { 'machine.meilleur_multiplicateur': { $gte: multiplicateurMin } },
+      { projection: {
+        pseudo: 1,
+        'machine.meilleur_multiplicateur': 1,
+        'machine.parties': 1,
+        'machine.mise': 1,
+        'machine.gain': 1,
+        'machine.combinaisons': 1,
+      } },
+    )
+    .sort({ 'machine.meilleur_multiplicateur': -1, _id: 1 })
+    .limit(limite)
+    .toArray();
+}
+
+/** Mongo n'est pas joignable : les routes qui en dependent repondent 503. */
+export class ErreurMongoIndisponible extends Error {
+  constructor() {
+    super('MongoDB indisponible');
+  }
 }
 
 export async function lireReplay(partieId: number): Promise<Replay | null> {

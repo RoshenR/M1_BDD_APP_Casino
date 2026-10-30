@@ -30,7 +30,16 @@ db.createCollection('replays', {
         gain:     { bsonType: ['double', 'int'] },
         // Forme libre : c'est precisement la raison d'etre de cette collection.
         coups:    { bsonType: 'array' },
-        cree_le:  { bsonType: 'date' }
+        cree_le:  { bsonType: 'date' },
+        // Sous-document EMBARQUE, ajoute par le joueur (PATCH /moi/replays/:id).
+        annotation: {
+          bsonType: 'object',
+          properties: {
+            note:   { bsonType: 'string', maxLength: 200 },
+            favori: { bsonType: 'bool' },
+            maj_le: { bsonType: 'date' }
+          }
+        }
       }
     }
   }
@@ -42,6 +51,12 @@ db.replays.createIndex({ partieId: 1 }, { unique: true });
 db.replays.createIndex({ joueurId: 1, cree_le: -1 });
 // Purge automatique au bout d'un an : un replay n'est pas une piece comptable.
 db.replays.createIndex({ cree_le: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 365 });
+
+// Index PARTIEL : seuls les replays mis en favori y figurent.
+db.replays.createIndex(
+  { joueurId: 1, cree_le: -1 },
+  { name: 'replays_favoris', partialFilterExpression: { 'annotation.favori': true } }
+);
 
 print('[mongo] collection "replays" prete');
 
@@ -75,5 +90,16 @@ db.createCollection('stats_joueurs', {
     }
   }
 });
+
+// Index sur un champ IMBRIQUE : recherche des gros gagnants (filtre + tri).
+db.stats_joueurs.createIndex(
+  { 'machine.meilleur_multiplicateur': -1 },
+  { name: 'stats_meilleur_multiplicateur' }
+);
+
+// Le PEUPLEMENT de stats_joueurs n'est pas ici : ces documents sont DERIVES
+// des 800 000 parties de PostgreSQL. Au demarrage, si la collection est vide,
+// l'API appelle la fonction SQL export_stats_joueurs() et insere les 10 000
+// documents (api/src/server.ts). Aucune manipulation manuelle.
 
 print('[mongo] collection "stats_joueurs" prete');

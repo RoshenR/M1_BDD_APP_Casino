@@ -15,7 +15,7 @@
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
 import { z } from 'zod';
-import { remplacerStats, type StatsJoueur } from '../infra/mongo.js';
+import { grosGagnants, remplacerStats, type StatsJoueur } from '../infra/mongo.js';
 import { ErreurHttp, traduireErreurPg } from '../erreurs.js';
 
 const poolAdmin = new pg.Pool({
@@ -128,6 +128,19 @@ export async function routesAdmin(app: FastifyInstance): Promise<void> {
     const { longueur } = z.object({ longueur: z.coerce.number().int().min(2).max(6).default(4) })
       .parse(req.query);
     return admin('SELECT * FROM casino.detecter_collusion($1)', [longueur]);
+  });
+
+  /**
+   * Gros gagnants (surveillance anti-fraude), servis par MongoDB : filtre et
+   * tri sur le champ imbrique machine.meilleur_multiplicateur, couvert par un
+   * index. Ex. : ?multiplicateur=1000 -> les joueurs qui ont touche le jackpot.
+   */
+  app.get('/admin/mongo/gros-gagnants', proteger, async (req) => {
+    const { multiplicateur, limite } = z.object({
+      multiplicateur: z.coerce.number().int().min(1).max(1000).default(200),
+      limite: z.coerce.number().int().min(1).max(100).default(20),
+    }).parse(req.query);
+    return grosGagnants(multiplicateur, limite);
   });
 
   /** Reconstruit la collection Mongo stats_joueurs depuis PostgreSQL. */

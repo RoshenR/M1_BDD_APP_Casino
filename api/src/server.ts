@@ -16,7 +16,7 @@ import { config } from './config.js';
 import { ErreurHttp } from './erreurs.js';
 import { fermerPostgres, requete } from './infra/postgres.js';
 import { fermerRedis, redis } from './infra/redis.js';
-import { compterStats, connecterMongo, fermerMongo } from './infra/mongo.js';
+import { compterStats, connecterMongo, ErreurMongoIndisponible, fermerMongo } from './infra/mongo.js';
 import { routesAuth } from './routes/auth.js';
 import { routesProfil } from './routes/profil.js';
 import { routesJeux } from './routes/jeux.js';
@@ -75,6 +75,9 @@ app.setErrorHandler((err, req, reply) => {
       erreur: 'Requete invalide',
       details: err.issues.map((i) => ({ champ: i.path.join('.'), probleme: i.message })),
     });
+  }
+  if (err instanceof ErreurMongoIndisponible) {
+    return reply.code(503).send({ erreur: 'Service de statistiques (MongoDB) indisponible' });
   }
   if ((err as { statusCode?: number }).statusCode === 429) {
     return reply.code(429).send({ erreur: 'Trop de requetes, ralentissez.' });

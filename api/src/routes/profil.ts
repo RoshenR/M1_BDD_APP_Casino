@@ -7,7 +7,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { avecJoueur, requete } from '../infra/postgres.js';
-import { lireReplays, lireStats } from '../infra/mongo.js';
+import { annoterReplay, lireReplays, lireStats, supprimerReplay } from '../infra/mongo.js';
 import { ErreurHttp, traduireErreurPg } from '../erreurs.js';
 
 const schemaMontant = z.object({ montant: z.number().positive().max(10_000) });
@@ -129,8 +129,106 @@ export async function routesProfil(app: FastifyInstance): Promise<void> {
     return stats ?? null;
   });
 
+  // --- Replays : CRUD sur MongoDB -------------------------------------------
+  //   C  a chaque partie terminee (routes/jeux.ts -> enregistrerReplay)
+  //   R  GET    /moi/replays[?favoris=true]
+  //   U  PATCH  /moi/replays/:partieId   { note?, favori? }
+  //   D  DELETE /moi/replays/:partieId
+  const schemaPartieId = z.object({ partieId: z.coerce.number().int().positive() });
+
   /** Replays detailles, servis par MongoDB. */
-  app.get('/moi/replays', proteger, async (req) => lireReplays(req.joueur.id, 20));
+  app.get('/moi/replays', proteger, async (req) => {
+    const { limite, favoris } = z.object({
+      limite: z.coerce.number().int().min(1).max(100).default(20),
+      favoris: z.enum(['true', 'false']).default('false'),
+    }).parse(req.query);
+    return lireReplays(req.joueur.id, limite, favoris === 'true');
+  });
+
+  app.patch('/moi/replays/:partieId', proteger, async (req) => {
+    const { partieId } = schemaPartieId.parse(req.params);
+    const corps = z.object({
+      note: z.string().trim().max(200).optional(),
+      favori: z.boolean().optional(),
+    }).refine((c) => c.note !== undefined || c.favori !== undefined, {
+      message: 'Indiquez au moins "note" ou "favori"',
+    }).parse(req.body);
+
+    const replay = await annoterReplay(req.joueur.id, partieId, corps);
+    if (!replay) throw new ErreurHttp(404, `Aucun replay pour la partie ${partieId}`);
+    return replay;
+  });
+
+  app.delete('/moi/replays/:partieId', proteger, async (req) => {
+    const { partieId } = schemaPartieId.parse(req.params);
+    const supprimes = await supprimerReplay(req.joueur.id, partieId);
+    if (supprimes === 0) throw new ErreurHttp(404, `Aucun replay pour la partie ${partieId}`);
+    return { supprime: true, partieId };
+  });
+
+  /**
+   * LECTURE CROISEE PostgreSQL + MongoDB, reliees par le meme identifiant
+   * (joueurs.id = stats_joueurs._id).
+   *   · l'ARGENT vient de PostgreSQL (v_stats_joueur) : c'est la source de verite ;
+   *   · le COMPORTEMENT vient de MongoDB (stats_joueurs) : donnees derivees.
+   * Le champ coherence compare le nombre de parties des deux cotes : il prouve
+   * que la collection derivee suit bien la source.
+   */
+  app.get('/moi/bilan', proteger, async (req) => {
+    const [argent] = await lire(req.joueur.id,
+      `SELECT pseudo, nb_parties, total_mise, total_gagne, resultat_net, taux_reussite,
+              net_blackjack, net_roulette, net_machine, derniere_partie
+       FROM casino.v_stats_joueur WHERE joueur_id = $1`, [req.joueur.id]);
+    if (!argent) throw new ErreurHttp(404, 'Joueur introuvable');
+
+    const comportement = await lireStats(req.joueur.id);
+    const partiesMongo = ['roulette', 'machine', 'blackjack']
+      .reduce((n, jeu) => n + Number((comportement as unknown as Record<string, { parties?: number } | undefined> | null)?.[jeu]?.parties ?? 0), 0);
+
+    return {
+      joueur_id: req.joueur.id,
+      source_postgres: argent,
+      source_mongodb: comportement,
+      coherence: {
+        parties_postgres: Number(argent.nb_parties),
+        parties_mongodb: partiesMongo,
+        synchronise: Number(argent.nb_parties) === partiesMongo,
+      },
+    };
+  });
+
+  // --- Amities : CRUD relationnel, DELETE compris ----------------------------
+  app.get('/moi/amis', proteger, async (req) => {
+    // INNER JOIN amities -> joueurs : un ami dont le compte est ferme disparait
+    // (la RLS de joueurs ne montre que les comptes actifs).
+    return lire(req.joueur.id,
+      `SELECT a.ami_id, j.pseudo, a.cree_le AS amis_depuis
+       FROM casino.amities a
+       JOIN casino.joueurs j ON j.id = a.ami_id
+       WHERE a.joueur_id = $1
+       ORDER BY a.cree_le DESC, j.pseudo`, [req.joueur.id]);
+  });
+
+  app.post('/moi/amis', proteger, async (req, reply) => {
+    const { pseudo } = z.object({ pseudo: z.string().trim().min(3).max(24) }).parse(req.body);
+    try {
+      const [ami] = await lire(req.joueur.id, 'SELECT * FROM casino.ajouter_ami($1, $2)', [req.joueur.id, pseudo]);
+      return reply.code(201).send(ami);
+    } catch (err) {
+      throw traduireErreurPg(err);
+    }
+  });
+
+  app.delete('/moi/amis/:amiId', proteger, async (req) => {
+    const { amiId } = z.object({ amiId: z.coerce.number().int().positive() }).parse(req.params);
+    try {
+      const [r] = await lire(req.joueur.id, 'SELECT casino.retirer_ami($1, $2) AS lignes_supprimees',
+        [req.joueur.id, amiId]);
+      return { supprime: true, ami_id: amiId, ...r };
+    } catch (err) {
+      throw traduireErreurPg(err);
+    }
+  });
 
   /**
    * Statistiques de jeu, servies par MongoDB : un document par joueur, une
