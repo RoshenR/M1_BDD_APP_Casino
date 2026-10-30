@@ -26,7 +26,7 @@
     "migrer": "docker compose exec postgres psql -U postgres -d casino -f /db/migrations/2026-10-28_transferts_et_stats_mongo.sql",
     "typecheck": "cd api && npx tsc --noEmit && cd ../web && npx tsc -b --noEmit",
     "test:api": "node scripts/test-api.mjs",
-    "typecheck:docker": "docker compose exec -T api npx tsc --noEmit",
+    "typecheck:docker": "docker compose exec -T api npx tsc --noEmit && docker compose exec -T web npx tsc -b --noEmit",
     "sauvegarde": "node scripts/sauvegarde.mjs",
     "restaurer": "node scripts/restaurer.mjs"
   }
