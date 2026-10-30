@@ -95,6 +95,7 @@ services:
     volumes:
       - mongodata:/data/db
       - ./db/mongo-init:/docker-entrypoint-initdb.d:ro
+      - ./db/demo:/db/demo:ro
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 10s

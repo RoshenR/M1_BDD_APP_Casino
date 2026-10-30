@@ -9,13 +9,21 @@
     "logs": "docker compose logs -f api",
     "psql": "docker compose exec postgres psql -U postgres -d casino",
     "psql:api": "docker compose exec postgres psql -U casino_api -d casino",
+    "mongo": "docker compose exec mongo sh /db/demo/mongosh.sh",
+    "redis": "docker compose exec redis redis-cli",
     "demo:1": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/01-requetes-complexes.sql",
     "demo:2": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/02-vues.sql",
     "demo:3": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/03-index.sql",
     "demo:4": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/04-fonctions-triggers.sql",
     "demo:5": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/05-securite.sql",
+    "demo:6": "docker compose exec -T mongo sh /db/demo/mongosh.sh /db/demo/06-mongodb.js",
+    "demo:mongo": "docker compose exec -T mongo sh /db/demo/mongosh.sh /db/demo/06-mongodb.js",
     "index": "docker compose exec postgres psql -U postgres -d casino -f /db/demo/03-index.sql",
     "migrer": "docker compose exec postgres psql -U postgres -d casino -f /db/migrations/2026-10-28_transferts_et_stats_mongo.sql",
-    "typecheck": "cd api && npx tsc --noEmit && cd ../web && npx tsc -b --noEmit"
+    "typecheck": "cd api && npx tsc --noEmit && cd ../web && npx tsc -b --noEmit",
+    "test:api": "node scripts/test-api.mjs",
+    "typecheck:docker": "docker compose exec -T api npx tsc --noEmit",
+    "sauvegarde": "node scripts/sauvegarde.mjs",
+    "restaurer": "node scripts/restaurer.mjs"
   }
 }
