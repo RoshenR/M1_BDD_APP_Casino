@@ -1,0 +1,4 @@
+# Les scripts executes DANS les conteneurs Linux doivent garder des fins de
+# ligne LF, meme apres un checkout sous Windows (core.autocrlf=true) : un \r
+# en fin de ligne casse sh ("set: Illegal option -", arguments parasites).
+*.sh  text eol=lf
