@@ -80,11 +80,14 @@ await test('GET /sante repond et l\'API tourne en casino_api (pas en superutilis
 });
 
 // Au premier demarrage, l'API reconstruit stats_joueurs en tache de fond.
-let docsMongo = 0;
-for (let i = 0; i < 40; i++) {
+async function compterDocsMongo() {
   const r = await appel('GET', '/statistiques/tirages');
-  docsMongo = r.donnees?.totaux?.documents ?? 0;
-  if (r.statut === 200 && docsMongo >= 10000) break;
+  return r.statut === 200 ? (r.donnees?.totaux?.documents ?? 0) : 0;
+}
+let docsMongo = 0;
+for (let i = 0; i < 20; i++) {
+  docsMongo = await compterDocsMongo();
+  if (docsMongo >= 10000) break;
   await new Promise((res) => setTimeout(res, 3000));
 }
 
@@ -101,6 +104,15 @@ await test('POST /auth/connexion corps invalide -> 400 (zod)', async () => {
 });
 const alice = await connexion('alice@casino.test');
 const admin = await connexion('admin@casino.test');
+
+// Base initialisee avant le 28/10 : la reconstruction automatique a pu echouer.
+// On la relance par la route prevue a cet effet (idempotente, rien n'est perdu).
+if (docsMongo < 10000) {
+  log(`\n  (stats_joueurs : ${docsMongo} documents -> POST /admin/mongo/reconstruire)`);
+  const r = await appel('POST', '/admin/mongo/reconstruire', { token: admin });
+  log(`  reconstruction : HTTP ${r.statut} ${JSON.stringify(r.donnees)}`);
+  docsMongo = await compterDocsMongo();
+}
 await test('Route protegee sans jeton -> 401', async () => {
   statut(await appel('GET', '/moi'), 401);
 });
