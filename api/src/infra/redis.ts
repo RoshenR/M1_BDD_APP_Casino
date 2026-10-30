@@ -53,7 +53,13 @@ export async function reinitialiserTentatives(cle: string): Promise<void> {
 
 /** Classement temps reel : mis a jour a chaque partie, sans toucher a la base. */
 export async function majClassement(pseudo: string, resultatNet: number): Promise<void> {
-  await redis.zincrby(CLE_CLASSEMENT, resultatNet, pseudo);
+  try {
+    await redis.zincrby(CLE_CLASSEMENT, resultatNet, pseudo);
+  } catch (e) {
+    // Classement d'animation : la partie est deja validee par PostgreSQL,
+    // une panne Redis ne doit pas la faire apparaitre en echec au joueur.
+    console.error('[redis] classement non mis a jour :', (e as Error).message);
+  }
 }
 
 export async function lireClassement(limite = 20): Promise<{ pseudo: string; net: number }[]> {
