@@ -28,8 +28,6 @@
     "test:api": "node scripts/test-api.mjs",
     "typecheck:docker": "docker compose exec -T api npx tsc --noEmit && docker compose exec -T web npx tsc -b --noEmit",
     "sauvegarde": "node scripts/sauvegarde.mjs",
-    "restaurer": "node scripts/restaurer.mjs",
-    "video:captures": "node scripts/captures-video.mjs",
-    "video:partie": "node scripts/captures-video.mjs partie"
+    "restaurer": "node scripts/restaurer.mjs"
   }
 }

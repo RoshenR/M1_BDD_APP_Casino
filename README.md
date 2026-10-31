@@ -678,8 +678,7 @@ cd api && npx tsc --noEmit
 La vidéo de présentation (8 à 12 minutes) est déposée dans [`docs/video/`](docs/video/).
 Si le fichier dépasse 100 Mo, le lien vers la version hébergée est indiqué ici.
 
-<!-- Remplacer par le lien réel une fois la vidéo enregistrée. -->
-**Lien : _à compléter après l'enregistrement_**
+**Vidéo : [`docs/video/presentation.mp4`](docs/video/presentation.mp4)** (8 min 44, 1080p).
 
 Le scénario, le script oral et les commandes utilisées sont dans
 [`docs/video/`](docs/video/).
@@ -690,13 +689,12 @@ Le scénario, le script oral et les commandes utilisées sont dans
 
 Conformément aux consignes, nous déclarons l'usage d'outils d'IA :
 
-- **Claude (Anthropic), via Claude Code** — assistance au développement (le dossier
-  `.claude/` en garde la trace).
-- **Claude (Anthropic)** — finalisation sur la branche `ahuV1` : audit du projet par
+- **Claude (Anthropic), via Claude Code** — assistance au développement.
+- **Claude (Anthropic)** — finalisation du projet : audit du projet par
   rapport à la grille d'évaluation, CRUD des amitiés (`ajouter_ami`, `retirer_ami`),
   CRUD des replays et pipelines d'agrégation MongoDB, lecture croisée `/moi/bilan`,
   script de démonstration MongoDB, tests de l'API, scripts de sauvegarde,
-  `docs/presentation.md` et préparation de la vidéo. Ces commits portent la mention
+  `docs/presentation.md` et montage de la vidéo de présentation (motion design sur nos enregistrements vocaux). Ces commits portent la mention
   `Co-Authored-By: Claude`.
 
 L'équipe reste responsable de chaque ligne livrée et doit pouvoir l'expliquer et la défendre.

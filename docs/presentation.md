@@ -522,5 +522,5 @@ Une sauvegarde n'existe que si sa restauration a été testée. L'archivage des 
 - **Mots de passe des rôles PostgreSQL écrits dans `05_securite.sql`** : ce sont des valeurs de développement, mais les surcharger dans `.env` ne change que l'URL de connexion de l'API, pas le rôle lui-même. Il faudrait générer ces rôles par un script shell d'initialisation qui lit les variables d'environnement.
 - **Cohérence PostgreSQL → MongoDB à terme** : l'écriture Mongo suit le `COMMIT` sans garantie de livraison. Un *outbox pattern* (table d'événements lue par un worker) ou le *change data capture* rendrait la synchronisation fiable ; aujourd'hui, la reconstruction complète sert de filet de sécurité.
 - **Pas d'archivage WAL** (voir §8).
-- **Historique Git court** : le dépôt a été poussé tardivement (2 commits avant la branche `ahuV1`). Les commits de finalisation sont séparés par sujet.
+- **Historique Git court** : le dépôt a été poussé tardivement (2 commits avant la phase de finalisation). Les commits de finalisation sont séparés par sujet.
 - **Pistes** : `pg_partman` pour partitionner `parties` et `transactions` par mois ; un vrai cache Redis devant `GET /statistiques/tirages` avec invalidation à chaque partie ; des tests automatisés dans une CI GitHub Actions avec `docker compose`.
