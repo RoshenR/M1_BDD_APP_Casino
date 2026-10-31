@@ -46,6 +46,24 @@ const dc = (...a) => ['compose', ...a];
 const psql = (...a) => dc('exec', '-T', 'postgres', 'psql', '-P', 'pager=off', ...a);
 const mongo = (f) => dc('exec', '-T', 'mongo', 'sh', '/db/demo/mongosh.sh', f);
 
+// `npm run video:captures -- partie` : joue une roulette pour alice (sans la
+// supprimer, contrairement a test:api) puis la relit dans les deux bases.
+if (process.argv[2] === 'partie') {
+  await http('11b-partie-jouee', [
+    ['POST', '/auth/connexion', { email: 'alice@casino.test', motDePasse: process.env.DEMO_PASSWORD ?? 'motdepasse' }],
+    ['POST', '/jeux/roulette', { mise: 10, pari: 'rouge', clientSeed: 'video' }, true],
+  ]);
+  lancer('11-partie-sql', 'docker', psql('-U', 'postgres', '-d', 'casino', '-f', '/db/demo/07-derniere-partie.sql'));
+  lancer('12-partie-mongo', 'docker', mongo('/db/demo/07-derniere-partie.js'));
+  lancer('10-redis-classement', 'docker', dc('exec', '-T', 'redis', 'redis-cli', 'ZREVRANGE', 'casino:classement:net', '0', '4', 'WITHSCORES'));
+  await http('13-bilan-et-erreur', [
+    ['POST', '/auth/connexion', { email: 'alice@casino.test', motDePasse: process.env.DEMO_PASSWORD ?? 'motdepasse' }],
+    ['GET', '/moi/bilan', null, true],
+    ['POST', '/moi/transfert', { vers: 'personne_123', montant: 10 }, true],
+  ]);
+  process.exit(0);
+}
+
 lancer('01-up', 'docker', dc('up', '-d', '--wait'));
 lancer('02-ps', 'docker', dc('ps', '--format', 'table {{.Name}}\t{{.Status}}'));
 lancer('03-logs-api', 'docker', dc('logs', 'api'), { filtre: (l) => /Stats Mongo|API prete|Server listening/.test(l) });
